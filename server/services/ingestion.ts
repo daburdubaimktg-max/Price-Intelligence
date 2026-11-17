@@ -40,6 +40,8 @@ export interface ObservationInput {
   confidence?: number | null;
   collection_status?: 'complete' | 'partial';
   note?: string | null;
+  /** When this particular row was captured (overrides IngestOptions.collectedAt). */
+  collected_at?: string | null;
 }
 
 export interface IngestOptions {
@@ -346,7 +348,7 @@ export function ingestObservations(ctx: AppContext, inputs: ObservationInput[], 
       const createdAt = nowIso();
       const record: Record<(typeof INSERT_COLUMNS)[number], unknown> = {
         ...row,
-        collected_at: collectedAt,
+        collected_at: input.collected_at ?? collectedAt,
         source_method: options.sourceMethod,
         job_id: options.jobId ?? null,
         import_batch_id: options.importBatchId ?? null,

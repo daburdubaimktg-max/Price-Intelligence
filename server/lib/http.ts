@@ -92,10 +92,14 @@ export function assert(condition: unknown, error: AppError): asserts condition {
   if (!condition) throw error;
 }
 
-/** Accepts '' / null / undefined as "not provided". */
+/**
+ * Optional-field schemas. They accept a missing key, null or '' as "not provided" and normalise it to null.
+ * (In zod 4 a key may only be absent when its schema is optional, hence the explicit `.optional()`.)
+ */
 export const optionalText = (max = 500) =>
   z
-    .union([z.string(), z.null(), z.undefined()])
+    .union([z.string(), z.null()])
+    .optional()
     .transform((v) => {
       if (v === null || v === undefined) return null;
       const t = v.trim();
@@ -103,26 +107,32 @@ export const optionalText = (max = 500) =>
     });
 
 export const optionalNumber = () =>
-  z.union([z.number(), z.string(), z.null(), z.undefined()]).transform((v, ctx) => {
-    if (v === null || v === undefined || v === '') return null;
-    const n = typeof v === 'number' ? v : Number(String(v).replace(/,/g, ''));
-    if (!Number.isFinite(n)) {
-      ctx.addIssue({ code: 'custom', message: 'must be a number' });
-      return z.NEVER;
-    }
-    return n;
-  });
+  z
+    .union([z.number(), z.string(), z.null()])
+    .optional()
+    .transform((v, ctx) => {
+      if (v === null || v === undefined || v === '') return null;
+      const n = typeof v === 'number' ? v : Number(String(v).replace(/,/g, ''));
+      if (!Number.isFinite(n)) {
+        ctx.addIssue({ code: 'custom', message: 'must be a number' });
+        return z.NEVER;
+      }
+      return n;
+    });
 
 export const optionalId = () =>
-  z.union([z.number(), z.string(), z.null(), z.undefined()]).transform((v, ctx) => {
-    if (v === null || v === undefined || v === '') return null;
-    const n = Number(v);
-    if (!Number.isInteger(n) || n <= 0) {
-      ctx.addIssue({ code: 'custom', message: 'must be a valid id' });
-      return z.NEVER;
-    }
-    return n;
-  });
+  z
+    .union([z.number(), z.string(), z.null()])
+    .optional()
+    .transform((v, ctx) => {
+      if (v === null || v === undefined || v === '') return null;
+      const n = Number(v);
+      if (!Number.isInteger(n) || n <= 0) {
+        ctx.addIssue({ code: 'custom', message: 'must be a valid id' });
+        return z.NEVER;
+      }
+      return n;
+    });
 
 export const requiredId = () =>
   z.union([z.number(), z.string()]).transform((v, ctx) => {
@@ -135,4 +145,7 @@ export const requiredId = () =>
   });
 
 export const flag = () =>
-  z.union([z.boolean(), z.number(), z.string(), z.null(), z.undefined()]).transform((v) => v === true || v === 1 || v === '1' || v === 'true');
+  z
+    .union([z.boolean(), z.number(), z.string(), z.null()])
+    .optional()
+    .transform((v) => v === true || v === 1 || v === '1' || v === 'true');

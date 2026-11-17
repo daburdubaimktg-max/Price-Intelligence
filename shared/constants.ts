@@ -167,7 +167,7 @@ export const ALERT_TYPE_INFO: Record<AlertType, { label: string; description: st
   },
   price_increase: {
     label: 'Unexpected price increase',
-    description: 'A selling price increases by at least the threshold.',
+    description: 'A selling price increases by at least the threshold (a price returning to its regular level when a promotion ends is ignored).',
     threshold: 'pct',
     thresholdLabel: 'Minimum increase (%)',
     defaultThreshold: 5,

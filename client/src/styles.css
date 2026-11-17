@@ -1,0 +1,319 @@
+@import 'tailwindcss';
+@import '@fontsource-variable/ibm-plex-sans/wght.css';
+@import '@fontsource/ibm-plex-mono/400.css';
+@import '@fontsource/ibm-plex-mono/500.css';
+@import '@fontsource/ibm-plex-serif/500-italic.css';
+
+/*
+  Price Intelligence OS — design tokens.
+  Direction: a ledger. Paper-neutral plane, white sheets, hairline rules, deep navy ink, tabular figures.
+  Colour is spent on data and state only; chrome stays quiet.
+*/
+@theme {
+  --font-sans: 'IBM Plex Sans Variable', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+  --font-serif: 'IBM Plex Serif', Georgia, serif;
+
+  /* planes */
+  --color-paper: #f5f4f0;
+  --color-surface: #ffffff;
+  --color-sunken: #faf9f6;
+  --color-wash: #f3f2ed;
+
+  /* rules */
+  --color-line: #e5e3dc;
+  --color-line-strong: #cfccc2;
+
+  /* ink (navy) */
+  --color-ink: #0e1b36;
+  --color-ink-2: #3f4a63;
+  --color-ink-3: #6b7489;
+  --color-ink-4: #9aa1b0;
+
+  /* actions */
+  --color-navy: #14244a;
+  --color-navy-hover: #0b1730;
+  --color-accent: #1c5cab;
+  --color-accent-soft: #e9f1fc;
+
+  /* identity: own brand vs competitor (chart slots 1 and 2) */
+  --color-own: #2a78d6;
+  --color-own-soft: #e6f0fc;
+  --color-own-ink: #184f95;
+  --color-comp: #eb6834;
+  --color-comp-soft: #fdeee7;
+  --color-comp-ink: #a84014;
+
+  /* status — always paired with an icon or label */
+  --color-good: #0ca30c;
+  --color-good-ink: #006300;
+  --color-good-soft: #e8f5e8;
+  --color-warn: #fab219;
+  --color-warn-ink: #7a5200;
+  --color-warn-soft: #fff4d6;
+  --color-serious: #ec835a;
+  --color-crit: #d03b3b;
+  --color-crit-ink: #a52626;
+  --color-crit-soft: #fbe9e8;
+
+  /* categorical chart slots (validated order — never reorder, never cycle) */
+  --color-s1: #2a78d6;
+  --color-s2: #eb6834;
+  --color-s3: #1baf7a;
+  --color-s4: #eda100;
+  --color-s5: #e87ba4;
+  --color-s6: #008300;
+  --color-s7: #6250d6;
+  --color-s8: #e34948;
+  --color-chart-grid: #e9e7e0;
+  --color-chart-axis: #cfccc2;
+  --color-chart-muted: #8a8f9c;
+
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 10px;
+  --radius-xl: 14px;
+
+  --shadow-pop: 0 12px 32px -8px rgb(14 27 54 / 0.18), 0 2px 6px -2px rgb(14 27 54 / 0.08);
+  --shadow-sheet: 0 1px 0 rgb(14 27 54 / 0.02);
+
+  --breakpoint-3xl: 1760px;
+}
+
+@layer base {
+  html {
+    color-scheme: light;
+    font-family: var(--font-sans);
+    -webkit-text-size-adjust: 100%;
+    text-rendering: optimizeLegibility;
+  }
+  body {
+    margin: 0;
+    background: var(--color-paper);
+    color: var(--color-ink);
+    font-size: 14px;
+    line-height: 20px;
+    font-feature-settings: 'ss01' 0;
+    -webkit-font-smoothing: antialiased;
+  }
+  ::selection {
+    background: #cfe0f8;
+  }
+  :focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+  button,
+  [role='button'],
+  a,
+  summary,
+  label[for],
+  select {
+    cursor: pointer;
+  }
+  button:disabled,
+  [aria-disabled='true'] {
+    cursor: not-allowed;
+  }
+  a {
+    color: inherit;
+    text-decoration: none;
+  }
+  input[type='number']::-webkit-inner-spin-button,
+  input[type='number']::-webkit-outer-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+  input[type='number'] {
+    -moz-appearance: textfield;
+  }
+  input[type='date']::-webkit-calendar-picker-indicator {
+    opacity: 0.55;
+    cursor: pointer;
+  }
+  /* thin, quiet scrollbars inside sheets */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: #cfccc2 transparent;
+  }
+}
+
+@layer components {
+  /* small-caps style label used for table headers and field captions */
+  .eyebrow {
+    font-size: 11px;
+    line-height: 16px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--color-ink-3);
+  }
+  .num {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: 'tnum' 1;
+  }
+  .mono {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    letter-spacing: -0.01em;
+  }
+  .sheet {
+    background: var(--color-surface);
+    border: 1px solid var(--color-line);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-sheet);
+  }
+  /* The DEMO marker: a hatched stamp that cannot be mistaken for a status colour. */
+  .hatch {
+    background-image: repeating-linear-gradient(135deg, rgb(250 178 25 / 0.2) 0 6px, rgb(250 178 25 / 0.06) 6px 12px);
+  }
+  .link {
+    color: var(--color-accent);
+    text-decoration: underline;
+    text-decoration-color: rgb(28 92 171 / 0.3);
+    text-underline-offset: 3px;
+  }
+  .link:hover {
+    text-decoration-color: currentColor;
+  }
+  .table-wrap {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  table.grid-table {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+    font-size: 13px;
+    line-height: 18px;
+  }
+  table.grid-table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: var(--color-sunken);
+    border-bottom: 1px solid var(--color-line);
+    padding: 8px 12px;
+    text-align: left;
+    white-space: nowrap;
+    font-size: 11px;
+    line-height: 16px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--color-ink-3);
+  }
+  table.grid-table tbody td {
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--color-line);
+    vertical-align: middle;
+  }
+  table.grid-table tbody tr:last-child td {
+    border-bottom: 0;
+  }
+  table.grid-table tbody tr.is-clickable {
+    cursor: pointer;
+  }
+  table.grid-table tbody tr.is-clickable:hover td,
+  table.grid-table tbody tr.is-selected td {
+    background: var(--color-sunken);
+  }
+  table.grid-table.is-dense tbody td {
+    padding-top: 6px;
+    padding-bottom: 6px;
+  }
+}
+
+@keyframes pios-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes pios-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes pios-slide-in-right {
+  from {
+    transform: translateX(24px);
+    opacity: 0;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+@keyframes pios-slide-in-left {
+  from {
+    transform: translateX(-24px);
+    opacity: 0;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+@keyframes pios-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.animate-in {
+  animation: pios-in 0.28s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+.animate-fade {
+  animation: pios-fade 0.18s ease-out both;
+}
+.animate-drawer {
+  animation: pios-slide-in-right 0.24s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+.animate-drawer-left {
+  animation: pios-slide-in-left 0.24s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+.animate-spin-slow {
+  animation: pios-spin 0.9s linear infinite;
+}
+/* staggered page-load reveal: add .stagger to a container */
+.stagger > * {
+  animation: pios-in 0.34s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+.stagger > *:nth-child(1) { animation-delay: 0ms; }
+.stagger > *:nth-child(2) { animation-delay: 40ms; }
+.stagger > *:nth-child(3) { animation-delay: 80ms; }
+.stagger > *:nth-child(4) { animation-delay: 120ms; }
+.stagger > *:nth-child(5) { animation-delay: 160ms; }
+.stagger > *:nth-child(6) { animation-delay: 200ms; }
+.stagger > *:nth-child(n + 7) { animation-delay: 240ms; }
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-delay: 0ms !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+@media print {
+  body {
+    background: #fff;
+  }
+  .no-print {
+    display: none !important;
+  }
+  .sheet {
+    box-shadow: none;
+    break-inside: avoid;
+  }
+}

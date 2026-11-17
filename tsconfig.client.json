@@ -1,7 +1,11 @@
 {
   "compilerOptions": {
     "target": "es2022",
-    "lib": ["es2023", "dom", "dom.iterable"],
+    "lib": [
+      "es2023",
+      "dom",
+      "dom.iterable"
+    ],
     "module": "esnext",
     "moduleResolution": "bundler",
     "jsx": "react-jsx",
@@ -11,8 +15,21 @@
     "erasableSyntaxOnly": true,
     "verbatimModuleSyntax": true,
     "skipLibCheck": true,
-    "types": ["vite/client"],
-    "paths": { "@/*": ["./client/src/*"] }
+    "types": [
+      "vite/client"
+    ],
+    "paths": {
+      "@/*": [
+        "./client/src/*"
+      ],
+      "@shared/*": [
+        "./shared/*"
+      ]
+    }
   },
-  "include": ["client/src", "shared", "vite.config.ts"]
+  "include": [
+    "client/src",
+    "shared",
+    "vite.config.ts"
+  ]
 }

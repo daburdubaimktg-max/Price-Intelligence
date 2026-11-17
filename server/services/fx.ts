@@ -9,6 +9,8 @@ import { nowIso } from '../lib/time.ts';
 import { AppError } from '../lib/errors.ts';
 import { getSecret, getSetting } from './core.ts';
 import { safeFetch } from '../lib/net.ts';
+import type { Conversion } from '../../shared/api/analytics.ts';
+export type { Conversion };
 
 export const FX_BASE = 'USD';
 
@@ -18,17 +20,6 @@ export interface RateInfo {
   rate: number;
   as_of: string;
   source: string;
-  is_demo: boolean;
-}
-
-export interface Conversion {
-  from: string;
-  to: string;
-  /** Multiply an amount in `from` by this to get `to`. */
-  rate: number;
-  /** Timestamp of the oldest rate leg used. */
-  as_of: string;
-  sources: string[];
   is_demo: boolean;
 }
 

@@ -1,0 +1,58 @@
+{
+  "name": "price-intelligence-os",
+  "version": "1.0.0",
+  "description": "Price Intelligence OS — always-on FMCG competitive pricing intelligence platform",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.18.0"
+  },
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "dev:server": "node --watch-path=server --watch-path=shared server/index.ts",
+    "dev:client": "vite",
+    "build": "vite build",
+    "start": "NODE_ENV=production node server/index.ts",
+    "typecheck": "tsc -p tsconfig.server.json && tsc -p tsconfig.client.json",
+    "test": "node --test --test-concurrency=4 \"tests/**/*.test.ts\"",
+    "db:migrate": "node server/cli.ts migrate",
+    "db:seed-demo": "node server/cli.ts seed-demo",
+    "db:purge-demo": "node server/cli.ts purge-demo"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^1.9.0",
+    "@fastify/cookie": "^11.1.5",
+    "@fastify/helmet": "^13.2.0",
+    "@fastify/multipart": "^10.1.9",
+    "@fastify/rate-limit": "^11.2.2",
+    "@fastify/static": "^10.1.11",
+    "@fontsource-variable/inter": "^5.3.0",
+    "@tanstack/react-query": "^5.107.1",
+    "cheerio": "^1.2.0",
+    "clsx": "^2.1.1",
+    "csv-parse": "^7.0.3",
+    "exceljs": "^4.4.0",
+    "fast-xml-parser": "^5.12.1",
+    "fastify": "^5.12.8",
+    "lucide-react": "^1.74.0",
+    "nodemailer": "^10.6.0",
+    "radix-ui": "^1.8.1",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "react-router": "^7.18.5",
+    "recharts": "^3.10.1",
+    "robots-parser": "^3.0.1",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.3.5",
+    "@types/node": "^22.20.5",
+    "@types/nodemailer": "^8.0.2",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.3.0",
+    "tailwindcss": "^4.3.5",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.8"
+  }
+}

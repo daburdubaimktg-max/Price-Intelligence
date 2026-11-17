@@ -1,0 +1,4 @@
+/* The application's own stylesheet; the snapshot only tells Tailwind where the class names live. */
+@import '../../client/src/styles.css';
+@source '../../client/src';
+@source '.';

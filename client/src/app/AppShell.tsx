@@ -1,11 +1,12 @@
-/** Application frame: sidebar navigation, top bar (assistant, alerts, account) and the DEMO-data banner. */
+/** Application frame: sidebar navigation, top bar (assistant, alerts, account) and the DEMO-data and snapshot banners. */
 import { lazy, Suspense, useEffect, useState, type ReactNode } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router';
 import { useQuery } from '@tanstack/react-query';
-import { Bell, FlaskConical, KeyRound, LogOut, Menu as MenuIcon, ShieldAlert, Sparkles, X } from 'lucide-react';
+import { Bell, Camera, FlaskConical, KeyRound, LogOut, Menu as MenuIcon, ShieldAlert, Sparkles, X } from 'lucide-react';
 import { apiGet } from '@/lib/api.ts';
 import { useAuth } from '@/lib/auth.tsx';
-import { fmtNumber, initials } from '@/lib/format.ts';
+import { fmtDateTime, fmtNumber, initials } from '@/lib/format.ts';
+import { snapshotInfo } from '@/lib/snapshot.ts';
 import { Menu } from '@/components/ui/overlays.tsx';
 import { Button, cn, IconButton, LoadingBlock } from '@/components/ui/primitives.tsx';
 import { NAV } from './nav.ts';
@@ -96,8 +97,24 @@ export function DemoBanner() {
   );
 }
 
+/** Shown only in the public, read-only snapshot edition: what the visitor is looking at, and as of when. */
+export function SnapshotBanner() {
+  const snapshot = snapshotInfo();
+  if (!snapshot) return null;
+  return (
+    <div className="no-print flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-line bg-accent-soft px-4 py-2 text-[12.5px] leading-5 text-ink-2 sm:px-6" role="note">
+      <Camera className="size-3.5 shrink-0 text-accent" aria-hidden />
+      <span className="min-w-0 flex-1">
+        <strong className="font-semibold text-ink">Read-only snapshot.</strong> The database as it stood on {fmtDateTime(snapshot.at)}; ages such as
+        “3 hours ago” are counted from that moment. Editing, price collection and downloads are switched off here.
+      </span>
+    </div>
+  );
+}
+
 export function AppShell() {
   const { user, logout } = useAuth();
+  const snapshot = snapshotInfo();
   const location = useLocation();
   const navigate = useNavigate();
   const [mobileNav, setMobileNav] = useState(false);
@@ -167,24 +184,37 @@ export function AppShell() {
               </span>
             ) : null}
           </button>
-          <Menu
-            trigger={
-              <button type="button" className="flex items-center gap-2 rounded-lg py-1 pr-1 pl-1 hover:bg-wash sm:pr-2.5" aria-label="Account menu">
-                <span className="flex size-7 items-center justify-center rounded-full bg-navy text-[11px] font-semibold text-white" aria-hidden>
-                  {initials(user?.name)}
-                </span>
-                <span className="hidden text-left leading-tight sm:block">
-                  <span className="block max-w-36 truncate text-[12.5px] font-medium text-ink">{user?.name}</span>
-                  <span className="block text-[11px] text-ink-3 capitalize">{user?.role}</span>
-                </span>
-              </button>
-            }
-            items={[
-              { label: 'Change password', icon: KeyRound, onSelect: () => setChangePassword(true) },
-              { label: 'Sign out', icon: LogOut, onSelect: () => void logout(), separatorBefore: true },
-            ]}
-          />
+          {snapshot ? (
+            <span className="flex items-center gap-2 py-1 pr-1 pl-1 sm:pr-2.5" title="The public snapshot is always shown as a read-only viewer">
+              <span className="flex size-7 items-center justify-center rounded-full bg-navy text-[11px] font-semibold text-white" aria-hidden>
+                {initials(user?.name)}
+              </span>
+              <span className="hidden text-left leading-tight sm:block">
+                <span className="block max-w-36 truncate text-[12.5px] font-medium text-ink">{user?.name}</span>
+                <span className="block text-[11px] text-ink-3">Read-only</span>
+              </span>
+            </span>
+          ) : (
+            <Menu
+              trigger={
+                <button type="button" className="flex items-center gap-2 rounded-lg py-1 pr-1 pl-1 hover:bg-wash sm:pr-2.5" aria-label="Account menu">
+                  <span className="flex size-7 items-center justify-center rounded-full bg-navy text-[11px] font-semibold text-white" aria-hidden>
+                    {initials(user?.name)}
+                  </span>
+                  <span className="hidden text-left leading-tight sm:block">
+                    <span className="block max-w-36 truncate text-[12.5px] font-medium text-ink">{user?.name}</span>
+                    <span className="block text-[11px] text-ink-3 capitalize">{user?.role}</span>
+                  </span>
+                </button>
+              }
+              items={[
+                { label: 'Change password', icon: KeyRound, onSelect: () => setChangePassword(true) },
+                { label: 'Sign out', icon: LogOut, onSelect: () => void logout(), separatorBefore: true },
+              ]}
+            />
+          )}
         </header>
+        <SnapshotBanner />
         <DemoBanner />
         {user?.uses_default_password ? (
           <div className="no-print flex flex-wrap items-center gap-2 border-b border-line bg-warn-soft px-4 py-2 text-[12.5px] text-ink-2 sm:px-6" role="alert">

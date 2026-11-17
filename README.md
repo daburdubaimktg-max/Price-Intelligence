@@ -240,6 +240,43 @@ be tested for real, in *Administration → Integrations*. Until then they are sh
 
 ---
 
+## A read-only snapshot you can open from a link
+
+`npm run build:snapshot` turns the app and a copy of the database into a static website (in `dist/pages`) that
+needs no server: put it on GitHub Pages or any static host and everyone with the link sees the app with the data
+as it stood when the snapshot was taken.
+
+```bash
+npm run build:snapshot
+```
+
+```bash
+npm run build:snapshot -- --db data/backups/some-backup.db
+```
+
+How it works: the page downloads the database copy (a few MB) and opens it with SQLite compiled to WebAssembly.
+The app's own routes and services — the same code the server runs — answer the screens from that copy, inside a
+background worker in the visitor's browser. Nothing is sent anywhere.
+
+What a snapshot is, and is not:
+
+- **Read-only.** Every visitor is the built-in *Snapshot viewer* (the Viewer role). Changes are refused; on-screen
+  reports, report CSV files and the assistant's built-in engine work because they are computed from the stored
+  records. Price collection, imports, Excel/CSV exports, evidence files and the administration area are not part of
+  a snapshot.
+- **A moment in time.** "Now" inside the snapshot starts at the moment it was taken, so freshness, ages and current
+  offers read exactly as they did then, however much later the link is opened. A banner states the real date.
+- **Public if the host is public.** There is no sign-in on a static page: anyone who has the link (or finds the
+  files) can read everything in it. The page asks search engines not to index it, which is a request, not a lock.
+- **Cleaned before it leaves.** The copy contains no password hashes, sessions, stored credentials, audit trail,
+  saved assistant questions or report runs; account names and addresses are replaced; ids and links of third-party
+  provider datasets are withheld. Price observations are copied untouched. The original database is only read.
+
+To publish on GitHub Pages: push the contents of `dist/pages` to a branch (conventionally `gh-pages`) and choose
+that branch under *Settings → Pages*. To take it down, switch Pages off there (and delete the branch).
+
+---
+
 ## Roles and security
 
 | Role | Can |
@@ -308,6 +345,7 @@ server/   Fastify HTTP API, run directly from TypeScript
   routes/     one file per API area, registered automatically
   seed/       reference data and the demo dataset
 shared/   Types and constants used by both sides
+snapshot/ The read-only static edition: runs server/routes + services in the browser on SQLite-WebAssembly
 tests/    API and service tests (node:test)
 ```
 
@@ -333,7 +371,8 @@ npm run typecheck
 The suite covers the ledger guarantees, ingestion and de-duplication, catalogue and matching, imports and exports,
 the collection engine (against local fixture servers), provider snapshots with tags, the bulk catalogue load, deal
 tags and the Deals and Brand Explorer figures, alerts, administration, analytics against hand-computed figures,
-reports, the assistant, access control and security headers, and the demo dataset's labelling and removal.
+reports, the assistant, access control and security headers, the demo dataset's labelling and removal, and the
+clean-up of the database copy that a public snapshot ships with.
 
 ## Known limits
 

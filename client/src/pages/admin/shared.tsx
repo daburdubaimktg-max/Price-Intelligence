@@ -1,10 +1,11 @@
 /** Helpers shared by the Administration tabs. */
-import { useState, type ReactNode } from 'react';
+import { useCallback, useState, type ReactNode } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { Check, CircleCheck, CircleDashed, Copy, Cpu, KeyRound, ShieldAlert, Trash2, type LucideIcon } from 'lucide-react';
-import { fmtRelative } from '@/lib/format.ts';
-import { Badge, Button, cn, EmptyState, Input, type BadgeTone } from '@/components/ui/primitives.tsx';
+import { fmtNumber, fmtRelative } from '@/lib/format.ts';
+import { Badge, Button, cn, EmptyState, Input, Notice, type BadgeTone } from '@/components/ui/primitives.tsx';
 import type { IntegrationState } from '@shared/api/admin.ts';
+import type { CollectionJob } from '@shared/api/collection.ts';
 
 export function errorText(error: unknown, fallback = 'Something went wrong'): string {
   return error instanceof Error && error.message ? error.message : fallback;
@@ -131,7 +132,7 @@ export function SecretField({
 /** Invalidate helper: `refresh(['users'], ['reference'])`. */
 export function useRefresh() {
   const client = useQueryClient();
-  return (...keys: unknown[][]) => Promise.all(keys.map((queryKey) => client.invalidateQueries({ queryKey })));
+  return useCallback((...keys: unknown[][]) => Promise.all(keys.map((queryKey) => client.invalidateQueries({ queryKey }))), [client]);
 }
 
 export function YesNo({ value, yes = 'Yes', no = 'No' }: { value: boolean | number | null | undefined; yes?: string; no?: string }) {
@@ -166,5 +167,65 @@ export function PathLine({ label, path }: { label: string; path: string }) {
       <div className="text-ink-3">{label}</div>
       <div className="mono mt-0.5 font-medium break-all text-ink">{path}</div>
     </div>
+  );
+}
+
+/**
+ * What a collection job really did, in the state the server recorded: running, succeeded, partial, failed,
+ * "not configured" (nothing was attempted) or cancelled. A simulated demo run is always labelled as such.
+ */
+export function JobOutcome({ job, children }: { job: CollectionJob; children?: ReactNode }) {
+  const simulated = job.data_class === 'simulated';
+  const kind = simulated ? 'Simulated demo run' : 'Collection job';
+  const counts = `${fmtNumber(job.listings_succeeded)} of ${fmtNumber(job.listings_total)} listing${job.listings_total === 1 ? '' : 's'} read · ${fmtNumber(job.observations_created)} new observation${
+    job.observations_created === 1 ? '' : 's'
+  } stored${job.duplicates_skipped ? ` · ${fmtNumber(job.duplicates_skipped)} unchanged duplicate${job.duplicates_skipped === 1 ? '' : 's'} skipped` : ''}`;
+  const problems = [job.listings_failed ? `${fmtNumber(job.listings_failed)} failed` : null, job.listings_missing ? `${fmtNumber(job.listings_missing)} not found at the source` : null]
+    .filter(Boolean)
+    .join(' · ');
+  const demoNote = simulated ? ' These are illustrative DEMO figures, not a real collection.' : '';
+
+  if (job.status === 'queued' || job.status === 'running') {
+    return (
+      <Notice tone="info" title={`${kind} #${job.id} is ${job.status === 'queued' ? 'queued' : 'running'}…`}>
+        This updates by itself when the run has finished. {children}
+      </Notice>
+    );
+  }
+  if (job.status === 'not_configured') {
+    return (
+      <Notice tone="warn" title={`Job #${job.id}: nothing was collected — the source is not configured`}>
+        {job.error_message ?? 'No request was made.'} {children}
+      </Notice>
+    );
+  }
+  if (job.status === 'succeeded') {
+    return (
+      <Notice tone={simulated ? 'demo' : 'good'} title={`${kind} #${job.id} finished`}>
+        {counts}.{demoNote} {children}
+      </Notice>
+    );
+  }
+  if (job.status === 'partial') {
+    return (
+      <Notice tone="warn" title={`${kind} #${job.id} finished with problems`}>
+        {counts}
+        {problems ? ` · ${problems}` : ''}.{job.error_message ? ` ${job.error_message}` : ''}
+        {demoNote} {children}
+      </Notice>
+    );
+  }
+  if (job.status === 'cancelled') {
+    return (
+      <Notice tone="warn" title={`${kind} #${job.id} was cancelled`}>
+        {counts}. {children}
+      </Notice>
+    );
+  }
+  return (
+    <Notice tone="crit" title={`${kind} #${job.id} failed`}>
+      {job.error_message ?? 'The run failed without an error message.'}
+      {job.error_code ? <span className="mono"> ({job.error_code})</span> : null} {children}
+    </Notice>
   );
 }

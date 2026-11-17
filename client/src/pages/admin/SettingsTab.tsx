@@ -49,6 +49,14 @@ export function SettingsTab() {
     e.preventDefault();
     if (!form) return;
     setError(null);
+    // The server's limits, said in plain words before the request is made.
+    const inRange = (value: string, min: number, max: number, whole: boolean) => {
+      const n = Number(value);
+      return value.trim() !== '' && Number.isFinite(n) && n >= min && n <= max && (!whole || Number.isInteger(n));
+    };
+    if (!inRange(form.promo_gap_days, 1, 60, true)) return setError('Promotion gap must be a whole number of days between 1 and 60.');
+    if (!inRange(form.alert_max_age_hours, 1, 720, false)) return setError('Alert maximum age must be between 1 and 720 hours.');
+    if (!inRange(form.collection_max_retries, 0, 5, true)) return setError('Automatic collection retries must be a whole number between 0 and 5.');
     const body: SettingsUpdate = {};
     if (form.reporting_currency !== saved.reporting_currency) body.reporting_currency = form.reporting_currency;
     if (form.organisation_name !== saved.organisation_name) body.organisation_name = form.organisation_name.trim();

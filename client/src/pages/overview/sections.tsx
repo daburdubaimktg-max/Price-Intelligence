@@ -9,7 +9,7 @@ import type { MarketOverviewRow, OverviewResult, PositionGroup, PriceEventRow, P
 import { DATA_CLASSES, DATA_CLASS_LABELS, type DataClass } from '@shared/constants.ts';
 import { ChartEmpty, ChartFrame, COMPETITOR_COLOR, DEEMPHASIS, DIVERGING, Legend, OWN_COLOR, SERIES_COLORS, type TableView } from '@/components/charts/kit.tsx';
 import { DivergingColumns, IndexScale, SegmentedBar, seriesTable, TimeSeriesChart, useSeriesChart, type Series } from '@/components/charts/charts.tsx';
-import { ChangeCell, DataClassBadge, DemoBadge, MarketTime, packText, ProductCell, PromoBadge } from '@/components/domain/domain.tsx';
+import { ChangeCell, DATA_CLASS_COLORS, DataClassBadge, DemoBadge, MarketTime, packText, ProductCell, PromoBadge } from '@/components/domain/domain.tsx';
 import { DataTable, type Column } from '@/components/ui/data-table.tsx';
 import { Badge, Card, CardHeader, cn, EmptyState, StatTile, Tip } from '@/components/ui/primitives.tsx';
 import { DASH, fmtDateShort, fmtNumber, fmtPct, fmtPrice, fmtRelative, plural } from '@/lib/format.ts';
@@ -165,13 +165,7 @@ export function KpiTiles({ data }: { data: OverviewResult }) {
 // ---------------------------------------------------------------------------------------------
 // Ledger composition (provenance)
 // ---------------------------------------------------------------------------------------------
-/** Validated as an adjacent set in this order (collected, imported, manual, simulated). */
-const CLASS_COLORS: Record<DataClass, string> = {
-  collected: SERIES_COLORS[5],
-  imported: SERIES_COLORS[6],
-  manual: SERIES_COLORS[4],
-  simulated: SERIES_COLORS[3],
-};
+const CLASS_COLORS = DATA_CLASS_COLORS;
 
 export function ProvenanceStrip({ data }: { data: OverviewResult }) {
   const byClass = new Map(data.provenance.map((p) => [p.data_class, p]));

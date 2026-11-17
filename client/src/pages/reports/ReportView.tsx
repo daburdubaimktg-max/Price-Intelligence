@@ -26,10 +26,11 @@ const PRINT_WIDTH = 1030;
  * its on-screen layout, scaled down to the page (`zoom`), so charts keep the exact geometry they were drawn with.
  */
 const SHEET_CSS = `
-.report-sheet table.grid-table thead th { white-space: normal; vertical-align: bottom; padding: 7px 9px; line-height: 14px; }
-.report-sheet table.grid-table tbody td { padding: 6px 9px; }
-.report-sheet table.grid-table tr > :first-child { padding-left: 14px; }
-.report-sheet table.grid-table tr > :last-child { padding-right: 14px; }
+.report-sheet table.grid-table { font-size: 12.5px; }
+.report-sheet table.grid-table thead th { white-space: normal; vertical-align: bottom; padding: 7px 6px; font-size: 10.5px; line-height: 14px; letter-spacing: 0.05em; }
+.report-sheet table.grid-table tbody td { padding: 6px 6px; }
+.report-sheet table.grid-table tr > :first-child { padding-left: 12px; }
+.report-sheet table.grid-table tr > :last-child { padding-right: 12px; }
 @media print {
   @page { size: A4 landscape; margin: 12mm; }
   html, body { background: #fff !important; }
@@ -210,9 +211,10 @@ export function ReportView({
 
       {report.summary.length ? (
         <div className="overflow-hidden border-b border-line" aria-label="Headline figures">
-          <div className="-mr-px -mb-px flex flex-wrap">
+          {/* up to six figures share one row; more are split over two balanced rows */}
+          <div className="-mr-px -mb-px flex flex-wrap" style={{ '--figures-per-row': report.summary.length <= 6 ? report.summary.length : Math.ceil(report.summary.length / 2) } as CSSProperties}>
             {report.summary.map((item, i) => (
-              <div key={i} className="min-w-[150px] flex-1 border-r border-b border-line px-4 py-3 sm:px-5">
+              <div key={i} className="min-w-0 grow basis-1/2 border-r border-b border-line px-4 py-3 sm:basis-1/3 sm:px-5 xl:basis-[calc(100%/var(--figures-per-row))]">
                 <div className="text-[12px] leading-4 font-medium text-ink-3">{item.label}</div>
                 <div className="mt-1 text-[20px] leading-7 font-semibold tracking-[-0.01em] text-ink">{item.value}</div>
                 {item.detail ? <div className="text-[12px] leading-4 text-ink-3">{item.detail}</div> : null}

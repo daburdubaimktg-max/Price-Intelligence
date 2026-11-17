@@ -1,12 +1,13 @@
 /** Promotional intensity over time and the promotion timeline (Gantt). */
-import { useEffect, useMemo, useState } from 'react';
+import { memo, useEffect, useMemo, useState } from 'react';
 import { TimeSeriesChart, useSeriesChart, type Series } from '@/components/charts/charts.tsx';
 import { ChartEmpty, ChartFrame, COMPETITOR_COLOR, Legend, OWN_COLOR, type TableView } from '@/components/charts/kit.tsx';
 import { Button, ErrorState, LoadingBlock, Segmented } from '@/components/ui/primitives.tsx';
 import { fmtDate, fmtPct } from '@/lib/format.ts';
+import type { Query } from '@/lib/api.ts';
 import { useApiQuery } from '@/lib/hooks.ts';
 import type { DateRange, DemoNote, PromoCalendarDay, PromoTimelineRow } from '@shared/api/analytics.ts';
-import { isRefetching, type PromoFilters } from './filters.ts';
+import { isRefetching } from './filters.ts';
 import { layoutTimeline, promoTypeColor, promoTypeLabel } from './promo-meta.ts';
 import { PromoTimeline } from './PromoTimeline.tsx';
 
@@ -18,8 +19,9 @@ interface CalendarResponse {
   days: PromoCalendarDay[];
 }
 
-export function IntensityChart({ filters }: { filters: PromoFilters }) {
-  const q = useApiQuery<CalendarResponse>(['promotions', 'calendar'], '/promotions/calendar', filters.query ?? undefined, { enabled: !!filters.query });
+/** `query` is the page's memoised scope + period, so the chart re-renders only when that changes. */
+export const IntensityChart = memo(function IntensityChart({ query }: { query: Query | null }) {
+  const q = useApiQuery<CalendarResponse>(['promotions', 'calendar'], '/promotions/calendar', query ?? undefined, { enabled: !!query });
   const days = q.data?.days ?? [];
 
   const series = useMemo<Series[]>(() => {
@@ -72,7 +74,7 @@ export function IntensityChart({ filters }: { filters: PromoFilters }) {
       />
     </ChartFrame>
   );
-}
+});
 
 // ---------------------------------------------------------------------------------------------
 // Promotion timeline
@@ -96,15 +98,15 @@ type Group = (typeof GROUPS)[number]['value'];
 /** Rows drawn before the reader asks for all of them (keeps the chart on one screen). */
 const ROW_LIMIT = 15;
 
-export function TimelineChart({ filters }: { filters: PromoFilters }) {
-  const group: Group = GROUPS.some((g) => g.value === filters.state.group) ? (filters.state.group as Group) : 'brand';
+export const TimelineChart = memo(function TimelineChart({ query, group: groupParam, onGroup }: { query: Query | null; group: string | undefined; onGroup: (group: string) => void }) {
+  const group: Group = GROUPS.some((g) => g.value === groupParam) ? (groupParam as Group) : 'brand';
   const [showAll, setShowAll] = useState(false);
   useEffect(() => setShowAll(false), [group]);
   const q = useApiQuery<TimelineResponse>(
     ['promotions', 'timeline'],
     '/promotions/timeline',
-    filters.query ? { ...filters.query, group_by: group } : undefined,
-    { enabled: !!filters.query },
+    query ? { ...query, group_by: group } : undefined,
+    { enabled: !!query },
   );
   const data = q.data;
   const layout = useMemo(() => layoutTimeline(data?.rows ?? []), [data]);
@@ -140,7 +142,7 @@ export function TimelineChart({ filters }: { filters: PromoFilters }) {
     <ChartFrame
       title="Promotional timeline"
       subtitle={data ? `Observed promotions ${fmtDate(data.period.from)} – ${fmtDate(data.period.to)}, by ${groupLabel.toLowerCase()}` : 'Observed promotions over time'}
-      actions={<Segmented label="Group timeline by" size="sm" value={group} onChange={(next) => filters.set({ group: next })} options={GROUPS.map((g) => ({ value: g.value, label: g.label }))} />}
+      actions={<Segmented label="Group timeline by" size="sm" value={group} onChange={onGroup} options={GROUPS.map((g) => ({ value: g.value, label: g.label }))} />}
       legend={layout.types.length ? <Legend items={layout.types.map((t) => ({ key: t, label: promoTypeLabel(t), color: promoTypeColor(t), shape: 'rect' as const }))} /> : undefined}
       table={table}
       refetching={isRefetching(q)}
@@ -174,4 +176,4 @@ export function TimelineChart({ filters }: { filters: PromoFilters }) {
       ) : null}
     </ChartFrame>
   );
-}
+});

@@ -1,5 +1,5 @@
 /** One retailer as a collection source: honest configuration status, credential, access permission, test, run, listings. */
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router';
 import { useQuery } from '@tanstack/react-query';
 import { CircleCheck, CircleDashed, FlaskConical, Hand, Pause, Pencil, Play, PlugZap, ShieldCheck } from 'lucide-react';
@@ -11,12 +11,25 @@ import { Badge, Button, DescriptionList, ErrorState, LoadingBlock, Notice, Segme
 import { DemoBadge, FrequencyLabel, MarketTime, MethodLabel } from '@/components/domain/domain.tsx';
 import { AUTOMATED_METHODS } from '@shared/constants.ts';
 import type { RetailerRow } from '@shared/api/catalogue.ts';
-import type { CollectionJob, CollectionTestResult, SourceConfigStatus } from '@shared/api/collection.ts';
+import type { CollectionJob, CollectionJobDetail, CollectionTestResult, SourceConfigStatus } from '@shared/api/collection.ts';
 import { RetailerListings } from './RetailerListings.tsx';
-import { errorText, PanelTitle, useRefresh } from './shared.tsx';
+import { errorText, JobOutcome, PanelTitle, useRefresh } from './shared.tsx';
 import { TestResultView } from './TestResult.tsx';
 
-export function RetailerDrawer({ retailerId, initialTab = 'source', onClose, onEdit }: { retailerId: number | null; initialTab?: 'source' | 'listings'; onClose: () => void; onEdit: (retailer: RetailerRow) => void }) {
+export function RetailerDrawer({
+  retailerId,
+  initialTab = 'source',
+  schedulerOff = false,
+  onClose,
+  onEdit,
+}: {
+  retailerId: number | null;
+  initialTab?: 'source' | 'listings';
+  /** True when the server's scheduler is known to be switched off (nothing is collected automatically). */
+  schedulerOff?: boolean;
+  onClose: () => void;
+  onEdit: (retailer: RetailerRow) => void;
+}) {
   const canManage = useCan('sources.manage');
   const canRun = useCan('collection.run');
   const toast = useToast();
@@ -49,7 +62,28 @@ export function RetailerDrawer({ retailerId, initialTab = 'source', onClose, onE
   const r = retailer.data;
   const s = status.data;
   const automated = r ? AUTOMATED_METHODS.includes(r.collection_method) : false;
-  const refreshAll = () => refresh(['retailers'], ['collection'], ['reference']);
+  const refreshAll = () => refresh(['retailers'], ['collection'], ['reference'], ['listings']);
+
+  // Follow the job this drawer started until it has really finished, then show what actually happened.
+  const jobId = startedJob?.id ?? null;
+  const followed = useQuery({
+    queryKey: ['collection', 'job-follow', jobId],
+    queryFn: () => apiGet<CollectionJobDetail>(`/collection/jobs/${jobId}`),
+    enabled: jobId !== null,
+    refetchInterval: (query) => {
+      const state = query.state.data?.job.status ?? startedJob?.status;
+      return state === 'queued' || state === 'running' ? 1500 : false;
+    },
+  });
+  const job = followed.data?.job ?? startedJob;
+  const jobFinished = job ? job.status !== 'queued' && job.status !== 'running' : false;
+  const announced = useRef<number | null>(null);
+  useEffect(() => {
+    if (!job || !jobFinished || announced.current === job.id) return;
+    announced.current = job.id;
+    // Counts, last-success times, listings and alerts may all have changed.
+    void refresh(['retailers'], ['listings'], ['collection', 'retailer-status'], ['collection', 'health'], ['alerts']);
+  }, [job, jobFinished, refresh]);
 
   async function test() {
     if (!r) return;
@@ -70,8 +104,13 @@ export function RetailerDrawer({ retailerId, initialTab = 'source', onClose, onE
     setBusy('run');
     try {
       const result = await apiPost<{ job: CollectionJob }>(`/collection/retailers/${r.id}/run`);
+      announced.current = null;
       setStartedJob(result.job);
-      toast.success('Collection started', `Job #${result.job.id} for ${r.name}. Follow it in the Data Collection Centre.`);
+      if (result.job.status === 'not_configured') {
+        toast.error('Nothing was collected — the source is not configured', result.job.error_message ?? undefined);
+      } else {
+        toast.success(result.job.data_class === 'simulated' ? 'Simulated demo run started' : 'Collection started', `Job #${result.job.id} for ${r.name}`);
+      }
       await refreshAll();
     } catch (err) {
       toast.error('The collection was not started', errorText(err));
@@ -164,6 +203,7 @@ export function RetailerDrawer({ retailerId, initialTab = 'source', onClose, onE
               ) : s.configured ? (
                 <Notice tone="good" icon={CircleCheck} title="Configured — ready to collect">
                   {s.explanation}
+                  {schedulerOff && r.is_enabled ? ' Note: the scheduler is switched off on this server, so nothing starts by itself — use “Run now”.' : ''}
                   {s.warnings.length ? (
                     <ul className="mt-1 list-disc pl-4 text-warn-ink">
                       {s.warnings.map((w, i) => (
@@ -174,12 +214,18 @@ export function RetailerDrawer({ retailerId, initialTab = 'source', onClose, onE
                 </Notice>
               ) : (
                 <Notice tone="warn" icon={CircleDashed} title="Not configured — no collection is attempted">
-                  <p>{s.explanation}</p>
-                  <ul className="mt-1 list-disc pl-4">
-                    {s.missing.map((m, i) => (
-                      <li key={i}>{m}</li>
-                    ))}
-                  </ul>
+                  {s.missing.length ? (
+                    <>
+                      <p>This source cannot be collected yet. Still required:</p>
+                      <ul className="mt-1 list-disc pl-4">
+                        {s.missing.map((m, i) => (
+                          <li key={i}>{m}</li>
+                        ))}
+                      </ul>
+                    </>
+                  ) : (
+                    <p>{s.explanation}</p>
+                  )}
                 </Notice>
               )}
 
@@ -206,15 +252,14 @@ export function RetailerDrawer({ retailerId, initialTab = 'source', onClose, onE
                 ) : null}
               </div>
 
-              {startedJob ? (
-                <Notice tone="info" title={`Job #${startedJob.id} started`}>
-                  The run happens in the background{startedJob.data_class === 'simulated' ? ' and is a simulated demo run' : ''}. Its outcome — success, failure or “not
-                  configured” — appears in the{' '}
+              {job ? (
+                <JobOutcome job={job}>
+                  The full log of this run is in the{' '}
                   <Link to="/collection" className="link">
                     Data Collection Centre
                   </Link>
                   .
-                </Notice>
+                </JobOutcome>
               ) : null}
               {testing ? <LoadingBlock label="Contacting the source…" className="min-h-16" /> : null}
               {testError ? (
@@ -250,7 +295,18 @@ export function RetailerDrawer({ retailerId, initialTab = 'source', onClose, onE
                     { label: 'Delay between requests', value: `${fmtNumber(r.rate_limit_ms)} ms` },
                     { label: 'Last attempt', value: <MarketTime iso={r.last_attempt_at} timeZone={r.timezone} /> },
                     { label: 'Last success', value: <MarketTime iso={r.last_success_at} timeZone={r.timezone} /> },
-                    { label: 'Next scheduled run', value: r.next_run_at ? <MarketTime iso={r.next_run_at} timeZone={r.timezone} /> : automated ? 'Not scheduled' : 'Not applicable' },
+                    {
+                      label: 'Next scheduled run',
+                      value: !r.next_run_at ? (
+                        automated ? 'Not scheduled' : 'Not applicable'
+                      ) : Date.parse(r.next_run_at) <= Date.now() ? (
+                        <span>
+                          Due now <span className="font-normal text-ink-3">(since <MarketTime iso={r.next_run_at} timeZone={r.timezone} short />)</span>
+                        </span>
+                      ) : (
+                        <MarketTime iso={r.next_run_at} timeZone={r.timezone} />
+                      ),
+                    },
                     { label: 'Consecutive failures', value: fmtNumber(r.consecutive_failures) },
                     { label: 'Listings', value: `${fmtNumber(r.active_listing_count)} active of ${fmtNumber(r.listing_count)} · ${fmtNumber(r.unmatched_listing_count)} unmatched` },
                     { label: 'Observations on record', value: fmtNumber(r.observation_count) },

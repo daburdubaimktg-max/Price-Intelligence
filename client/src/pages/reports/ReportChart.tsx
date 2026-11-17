@@ -1,26 +1,15 @@
 /** Draws a report section's chart. One y-axis, at most eight series; every value is in the table view. */
 import { useMemo } from 'react';
-import { currencyDecimals, fmtNumber, fmtPct } from '@/lib/format.ts';
+import { fmtNumber } from '@/lib/format.ts';
 import { ChartEmpty, ChartFrame, COMPETITOR_COLOR, DIVERGING, Legend, MAX_SERIES, OWN_COLOR, type TableView } from '@/components/charts/kit.tsx';
 import { BarList, DivergingColumns, seriesTable, TimeSeriesChart, useSeriesChart, type Series } from '@/components/charts/charts.tsx';
 import type { DateRange } from '@shared/api/analytics.ts';
 import type { ReportChart } from '@shared/api/reports.ts';
+import { unitFormatter } from './units.ts';
 
 type LineChart = Extract<ReportChart, { kind: 'line' }>;
 type DivergingChart = Extract<ReportChart, { kind: 'diverging' }>;
 type BarsChart = Extract<ReportChart, { kind: 'bars' }>;
-
-/** Formats a value in the chart's unit: 'index', '%' or a currency code. */
-export function unitFormatter(unit: string): (value: number) => string {
-  if (unit === 'index') return (v) => v.toFixed(1);
-  if (unit === '%') return (v) => fmtPct(v, 1);
-  if (!unit) return (v) => fmtNumber(v, 2);
-  const decimals = currencyDecimals(unit);
-  const plain = new Intl.NumberFormat('en-GB', { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
-  // unit prices below 1 need one more decimal than the currency normally shows
-  const fine = new Intl.NumberFormat('en-GB', { minimumFractionDigits: decimals, maximumFractionDigits: decimals === 0 ? 1 : decimals + 1 });
-  return (v) => (Math.abs(v) < 1 ? fine : plain).format(v);
-}
 
 function unitCaption(chart: ReportChart): string {
   if (chart.kind === 'diverging') return 'Count per day';
@@ -35,16 +24,18 @@ function LineSection({ chart, scope, period, height }: { chart: LineChart; scope
   // brand would otherwise all wear the same colour.
   const roles = chart.series.map((s) => s.role).filter(Boolean);
   const identity = roles.length === chart.series.length && new Set(roles).size === roles.length;
+  // a sublabel shared by every series (one brand, one market) says nothing about any of them
+  const sharedSublabel = chart.series.length > 1 && chart.series.every((s) => s.sublabel === chart.series[0]!.sublabel);
   const all = useMemo<Series[]>(
     () =>
       chart.series.map((s) => ({
         key: s.key,
         label: s.label,
-        sublabel: s.sublabel,
+        sublabel: sharedSublabel ? null : s.sublabel,
         color: identity ? (s.role === 'own' ? OWN_COLOR : s.role === 'competitor' ? COMPETITOR_COLOR : undefined) : undefined,
         points: s.points,
       })),
-    [chart.series, identity],
+    [chart.series, identity, sharedSublabel],
   );
   const drawn = useMemo(() => all.filter((s) => s.points.length > 0).slice(0, MAX_SERIES), [all]);
   const view = useSeriesChart(drawn, scope);

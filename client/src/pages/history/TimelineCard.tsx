@@ -158,6 +158,7 @@ export function TimelineCard({ filters }: { filters: HistoryFilters }) {
       { key: 'min', header: 'Lowest', align: 'right', cell: (s) => value(s, s.stats?.min), hideBelow: 'sm' },
       { key: 'max', header: 'Highest', align: 'right', cell: (s) => value(s, s.stats?.max), hideBelow: 'sm' },
       { key: 'vol', header: 'Volatility', align: 'right', cell: (s) => fmtPct(s.stats?.volatility_pct, 1), headerTitle: 'Standard deviation ÷ mean of the series', hideBelow: 'lg' },
+      { key: 'oos', header: 'Out of stock', align: 'right', cell: (s) => fmtPct(s.out_of_stock_share_pct, 1), headerTitle: 'Share of observed listing-days on which the listing was out of stock', hideBelow: 'lg' },
       { key: 'change', header: 'Change', align: 'right', cell: (s) => <ChangeCell pct={s.stats?.change_pct} />, headerTitle: 'First to last value in the period' },
     ];
   }, [metric, groupBy, bucket, convertedMarkets]);

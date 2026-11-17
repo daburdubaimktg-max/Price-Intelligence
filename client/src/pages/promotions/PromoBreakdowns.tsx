@@ -1,5 +1,5 @@
 /** Breakdowns of promotional activity: by mechanic, own vs competitors, by brand, by retailer, deepest discounts. */
-import { useMemo, useState } from 'react';
+import { memo, useMemo, useState } from 'react';
 import { ChartFrame, COMPETITOR_COLOR, OWN_COLOR } from '@/components/charts/kit.tsx';
 import { OwnershipDot, PromoBadge, ProductCell, packText } from '@/components/domain/domain.tsx';
 import { DataTable, type Column } from '@/components/ui/data-table.tsx';
@@ -15,7 +15,7 @@ const dayCount = (value: number | null) => (value === null ? DASH : value.toFixe
 // ---------------------------------------------------------------------------------------------
 // By promotion type
 // ---------------------------------------------------------------------------------------------
-export function ByTypeCard({ rows, refetching }: { rows: PromoBreakdown[]; refetching?: boolean }) {
+export const ByTypeCard = memo(function ByTypeCard({ rows, refetching }: { rows: PromoBreakdown[]; refetching?: boolean }) {
   const sorted = useMemo(() => [...rows].sort((a, b) => typeRank(a.key) - typeRank(b.key)), [rows]);
   const top = Math.max(1, ...sorted.map((r) => r.episodes));
   return (
@@ -33,9 +33,10 @@ export function ByTypeCard({ rows, refetching }: { rows: PromoBreakdown[]; refet
         ]),
       }}
     >
-      <ul className="flex flex-col gap-4">
+      {/* one column per mechanic on wide screens; the bars share one scale, so their lengths compare across columns */}
+      <ul className="grid gap-x-8 gap-y-4 sm:grid-cols-2 xl:grid-cols-4">
         {sorted.map((r) => (
-          <li key={r.key}>
+          <li key={r.key} className="min-w-0">
             <div className="flex items-baseline justify-between gap-3 text-[13px] leading-5">
               <span className="flex min-w-0 items-center gap-2 font-medium text-ink">
                 <span aria-hidden className="size-2.5 shrink-0 rounded-[2px]" style={{ background: promoTypeColor(r.key) }} />
@@ -59,7 +60,7 @@ export function ByTypeCard({ rows, refetching }: { rows: PromoBreakdown[]; refet
       </ul>
     </ChartFrame>
   );
-}
+});
 
 // ---------------------------------------------------------------------------------------------
 // Own brands vs competitors
@@ -105,7 +106,7 @@ function OwnershipColumn({ row, ownership }: { row: PromoBreakdown | undefined; 
   );
 }
 
-export function OwnVsCompetitorsCard({ rows, refetching }: { rows: PromoBreakdown[]; refetching?: boolean }) {
+export const OwnVsCompetitorsCard = memo(function OwnVsCompetitorsCard({ rows, refetching }: { rows: PromoBreakdown[]; refetching?: boolean }) {
   const own = rows.find((r) => r.ownership === 'own');
   const competitor = rows.find((r) => r.ownership === 'competitor');
   return (
@@ -117,7 +118,7 @@ export function OwnVsCompetitorsCard({ rows, refetching }: { rows: PromoBreakdow
       </div>
     </Card>
   );
-}
+});
 
 // ---------------------------------------------------------------------------------------------
 // By brand / by retailer (sortable in the browser — the breakdown is already complete)
@@ -146,7 +147,7 @@ function sortRows(rows: PromoBreakdown[], sort: string): PromoBreakdown[] {
   });
 }
 
-export function BreakdownTable({
+export const BreakdownTable = memo(function BreakdownTable({
   title,
   subtitle,
   firstColumn,
@@ -257,22 +258,24 @@ export function BreakdownTable({
       />
     </Card>
   );
-}
+});
 
 // ---------------------------------------------------------------------------------------------
 // Deepest discounts
 // ---------------------------------------------------------------------------------------------
-export function TopDiscountsCard({ rows, onOpen, refetching }: { rows: PromotionRecord[]; onOpen: (listingId: number) => void; refetching?: boolean }) {
+export const TopDiscountsCard = memo(function TopDiscountsCard({ rows, onOpen, refetching }: { rows: PromotionRecord[]; onOpen: (listingId: number) => void; refetching?: boolean }) {
+  // two columns on wide screens, read down the first column and then the second
+  const perColumn = Math.ceil(rows.length / 2);
   return (
     <Card className={cn(refetching && 'opacity-60 transition-opacity')}>
       <CardHeader title="Deepest discounts" subtitle="Promotions with the highest observed discount in the period" />
       {rows.length === 0 ? (
         <EmptyState title="No discounted promotion in this selection" className="py-8" />
       ) : (
-        <ol className="divide-y divide-line">
+        <ol className="lg:grid lg:grid-flow-col lg:grid-cols-2" style={{ gridTemplateRows: `repeat(${perColumn}, auto)` }}>
           {rows.map((r, index) => (
-            <li key={r.id}>
-              <button type="button" className="flex w-full items-center gap-3 px-4 py-2 text-left hover:bg-sunken" onClick={() => onOpen(r.listing_id)}>
+            <li key={r.id} className={cn('min-w-0 border-line', index > 0 && 'border-t', index === perColumn && 'lg:border-t-0', index >= perColumn && 'lg:border-l')}>
+              <button type="button" className="flex h-full w-full items-center gap-3 px-4 py-2 text-left hover:bg-sunken" onClick={() => onOpen(r.listing_id)}>
                 <span className="num w-4 shrink-0 text-right text-[12px] text-ink-4">{index + 1}</span>
                 <span className="min-w-0 flex-1">
                   <ProductCell name={r.product_name} brand={r.brand_name} pack={packText(r)} ownership={r.ownership} isDemo={r.is_demo} compact />
@@ -291,4 +294,4 @@ export function TopDiscountsCard({ rows, onOpen, refetching }: { rows: Promotion
       )}
     </Card>
   );
-}
+});

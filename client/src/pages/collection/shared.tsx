@@ -176,6 +176,12 @@ export function fmtRate(rate: number | null | undefined): string {
   return rate === null || rate === undefined || !Number.isFinite(rate) ? 'n/a' : fmtPct(rate * 100, 0);
 }
 
+/** Ends a message with a full stop unless it already ends a sentence (server messages vary). */
+export function sentence(text: string | null | undefined): string {
+  const t = (text ?? '').trim();
+  return !t || /[.!?…]$/.test(t) ? t : `${t}.`;
+}
+
 export function hostOf(url: string | null | undefined): string | null {
   if (!url) return null;
   try {
@@ -266,20 +272,20 @@ export function CollectionActionsProvider({ children }: { children: ReactNode })
       const simulated = job.data_class === 'simulated';
       const name = job.retailer_name;
       const stored = `${fmtNumber(job.observations_created)} ${simulated ? 'DEMO observation' : 'observation'}${job.observations_created === 1 ? '' : 's'} stored`;
-      const duplicates = job.duplicates_skipped ? ` · ${fmtNumber(job.duplicates_skipped)} already in the ledger` : '';
+      const duplicates = job.duplicates_skipped ? ` · ${fmtNumber(job.duplicates_skipped)} identical re-read${job.duplicates_skipped === 1 ? '' : 's'} skipped` : '';
       const tail = simulated ? ` ${SIMULATED_RUN_NOTE}.` : '';
       switch (job.status) {
         case 'succeeded':
           toast.success(simulated ? `Simulated run finished — ${name}` : `Collection succeeded — ${name}`, `${runSummary(job)} · ${stored}${duplicates}.${tail}`);
           break;
         case 'partial':
-          toast.info(simulated ? `Simulated run finished with gaps — ${name}` : `Collection finished with gaps — ${name}`, `${runSummary(job)} · ${stored}${duplicates}.${job.error_message ? ` ${job.error_message}` : ''}${tail}`);
+          toast.info(simulated ? `Simulated run finished with gaps — ${name}` : `Collection finished with gaps — ${name}`, `${runSummary(job)} · ${stored}${duplicates}.${job.error_message ? ` ${sentence(job.error_message)}` : ''}${tail}`);
           break;
         case 'failed':
-          toast.error(simulated ? `Simulated run failed — ${name}` : `Collection failed — ${name}`, `${job.error_message ?? 'The run failed.'} Nothing was captured.${tail}`);
+          toast.error(simulated ? `Simulated run failed — ${name}` : `Collection failed — ${name}`, `${sentence(job.error_message ?? 'The run failed')} Nothing was captured.${tail}`);
           break;
         case 'not_configured':
-          toast.error(`Not configured — nothing was collected from ${name}`, job.error_message ?? 'The source is missing required configuration, so no attempt was made.');
+          toast.error(`Not configured — nothing was collected from ${name}`, sentence(job.error_message ?? 'The source is missing required configuration, so no attempt was made'));
           break;
         case 'cancelled':
           toast.info(`Collection cancelled — ${name}`, job.error_message ?? undefined);
@@ -344,16 +350,16 @@ export function CollectionActionsProvider({ children }: { children: ReactNode })
     try {
       const result = await apiPost<RunDueResult>('/collection/run-due');
       await refresh();
+      // Sources that are due but cannot run (typically: not configured) are named, with the reason the server gave.
+      const skipped = result.skipped.length
+        ? `${result.skipped.length} due source${result.skipped.length === 1 ? ' was' : 's were'} skipped (${[...new Set(result.skipped.map((s) => s.reason.split(':')[0]!.trim().toLowerCase()))].join(', ')}): ${result.skipped
+            .slice(0, 4)
+            .map((s) => s.name)
+            .join(', ')}${result.skipped.length > 4 ? '…' : ''}.`
+        : '';
       if (result.started.length === 0) {
-        toast.info(
-          'Nothing is due right now',
-          result.skipped.length
-            ? `${result.skipped.length} source${result.skipped.length === 1 ? ' was' : 's were'} skipped: ${result.skipped
-                .slice(0, 3)
-                .map((s) => `${s.name} (${s.reason})`)
-                .join('; ')}${result.skipped.length > 3 ? '…' : ''}`
-            : 'No source or retry is scheduled to run at this moment.',
-        );
+        if (skipped) toast.info('Nothing was started', skipped);
+        else toast.info('Nothing is due right now', 'No source or retry is scheduled to run at this moment.');
         return;
       }
       const finished = await Promise.all(result.started.map((job) => follow(job)));
@@ -369,7 +375,7 @@ export function CollectionActionsProvider({ children }: { children: ReactNode })
       const real = finished.filter((j) => j.data_class === 'real');
       const simulated = finished.filter((j) => j.data_class === 'simulated');
       const lines = [real.length ? `Real collection: ${describe(real)}.` : '', simulated.length ? `Simulated demo runs: ${describe(simulated)}.` : ''].filter(Boolean);
-      if (result.skipped.length) lines.push(`${result.skipped.length} skipped.`);
+      if (skipped) lines.push(skipped);
       const problem = real.some((j) => j.status === 'failed' || j.status === 'not_configured');
       (problem ? toast.error : toast.info)(`${result.started.length} due job${result.started.length === 1 ? '' : 's'} ran`, lines.join(' '));
     } catch (err) {
@@ -406,7 +412,7 @@ export function SectionTitle({ children, aside, className }: { children: ReactNo
 export function Fact({ label, value, hint, className }: { label: ReactNode; value: ReactNode; hint?: ReactNode; className?: string }) {
   return (
     <div className={cn('min-w-0', className)}>
-      <div className="truncate text-[11.5px] leading-4 text-ink-3">{label}</div>
+      <div className="text-[11.5px] leading-4 text-ink-3">{label}</div>
       <div className="num text-[15px] leading-6 font-semibold text-ink">{value}</div>
       {hint ? <div className="text-[11.5px] leading-4 text-ink-3">{hint}</div> : null}
     </div>

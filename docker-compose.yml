@@ -1,0 +1,33 @@
+# Price Intelligence OS — single-node deployment.
+#
+#   docker compose up -d --build
+#   docker compose logs app        # on first start, shows the generated administrator password (if none was set)
+#
+# Values come from the shell or from a .env file next to this file (see .env.example).
+
+services:
+  app:
+    build: .
+    image: price-intelligence-os:latest
+    restart: unless-stopped
+    ports:
+      - "${PORT:-4000}:4000"
+    environment:
+      # First administrator. Leave both empty to have a one-time password generated and printed in the log.
+      PIOS_ADMIN_EMAIL: ${PIOS_ADMIN_EMAIL:-}
+      PIOS_ADMIN_PASSWORD: ${PIOS_ADMIN_PASSWORD:-}
+      # Load the clearly labelled DEMO dataset into an empty database ("false" starts empty).
+      PIOS_SEED_DEMO: ${PIOS_SEED_DEMO:-true}
+      # Set to "true" when a TLS-terminating reverse proxy sits in front (needed for secure cookies and HSTS).
+      PIOS_TRUST_PROXY: ${PIOS_TRUST_PROXY:-false}
+      PIOS_SECRET_KEY: ${PIOS_SECRET_KEY:-}
+      PIOS_USER_AGENT: ${PIOS_USER_AGENT:-PriceIntelligenceOS/1.0}
+      PIOS_ALLOW_PRIVATE_NETWORK: ${PIOS_ALLOW_PRIVATE_NETWORK:-false}
+      PIOS_ALLOW_EMBEDDING: ${PIOS_ALLOW_EMBEDDING:-false}
+      PIOS_EXCEL_MIRROR: ${PIOS_EXCEL_MIRROR:-on}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    volumes:
+      - pios-data:/data
+
+volumes:
+  pios-data:

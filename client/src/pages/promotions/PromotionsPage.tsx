@@ -71,16 +71,14 @@ export default function PromotionsPage() {
           </div>
 
           <div className="grid gap-4 xl:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
-            <IntensityChart filters={filters} />
+            <IntensityChart query={filters.query} />
             <OwnVsCompetitorsCard rows={summary.data.by_ownership} refetching={refetching} />
           </div>
 
-          <TimelineChart filters={filters} />
+          <TimelineChart query={filters.query} group={state.group} onGroup={filters.setGroup} />
 
-          <div className="grid gap-4 xl:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
-            <ByTypeCard rows={summary.data.by_type} refetching={refetching} />
-            <TopDiscountsCard rows={summary.data.top_discounts} onOpen={setListingId} refetching={refetching} />
-          </div>
+          <ByTypeCard rows={summary.data.by_type} refetching={refetching} />
+          <TopDiscountsCard rows={summary.data.top_discounts} onOpen={setListingId} refetching={refetching} />
 
           <div className="grid gap-4 3xl:grid-cols-2">
             <BreakdownTable

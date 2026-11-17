@@ -1,5 +1,5 @@
 /** Markets view: one card per configured market with coverage, freshness, activity, position and collection health. */
-import { useEffect, useState, type ReactNode } from 'react';
+import { memo, useEffect, useState, type ReactNode } from 'react';
 import { Link } from 'react-router';
 import { ArrowDown, ArrowUp, CircleCheck, CircleDashed, CirclePause, Clock, FlaskConical, TriangleAlert, type LucideIcon } from 'lucide-react';
 import { IndexScale, SegmentedBar } from '@/components/charts/charts.tsx';
@@ -78,7 +78,7 @@ function positionText(premium: number | null): string {
   return premium > 0 ? `own brands ${fmtPct(premium, 1)} above mapped competitors` : `own brands ${fmtPct(Math.abs(premium), 1)} below mapped competitors`;
 }
 
-export function MarketCard({ market: m, days, now, canManage }: { market: MarketOverviewRow; days: number; now: number; canManage: boolean }) {
+export const MarketCard = memo(function MarketCard({ market: m, days, now, canManage }: { market: MarketOverviewRow; days: number; now: number; canManage: boolean }) {
   const status = STATUS[m.status];
   const methods = Object.entries(m.retailers.by_method).sort((a, b) => b[1] - a[1]);
   const frequencies = Object.entries(m.retailers.by_frequency).sort((a, b) => (FREQUENCIES as readonly string[]).indexOf(a[0]) - (FREQUENCIES as readonly string[]).indexOf(b[0]));
@@ -246,9 +246,9 @@ export function MarketCard({ market: m, days, now, canManage }: { market: Market
       </div>
     </Card>
   );
-}
+});
 
-export function MarketSummary({ markets }: { markets: MarketOverviewRow[] }) {
+export const MarketSummary = memo(function MarketSummary({ markets }: { markets: MarketOverviewRow[] }) {
   const active = markets.filter((m) => m.is_active);
   const withData = active.filter((m) => m.listings.observed > 0);
   const attention = active.filter((m) => m.status === 'attention');
@@ -287,9 +287,9 @@ export function MarketSummary({ markets }: { markets: MarketOverviewRow[] }) {
       />
     </div>
   );
-}
+});
 
-export function DemoMarketsNotice({ markets }: { markets: MarketOverviewRow[] }) {
+export const DemoMarketsNotice = memo(function DemoMarketsNotice({ markets }: { markets: MarketOverviewRow[] }) {
   const withListings = markets.filter((m) => m.listings.active > 0);
   const demoOnly = withListings.filter((m) => m.demo_only);
   if (demoOnly.length === 0) return null;
@@ -307,4 +307,4 @@ export function DemoMarketsNotice({ markets }: { markets: MarketOverviewRow[] })
       )}
     </Notice>
   );
-}
+});

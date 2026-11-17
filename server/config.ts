@@ -19,6 +19,8 @@ export interface Config {
   secretKey: string | null;
   userAgent: string;
   allowPrivateNetwork: boolean;
+  /** Whether other sites may show the app inside a frame (preview panes, intranet portals). */
+  allowEmbedding: boolean;
   anthropicApiKey: string | null;
   sessionIdleHours: number;
   sessionAbsoluteHours: number;
@@ -62,6 +64,8 @@ export function loadConfig(overrides: Partial<Config> = {}): Config {
     userAgent: env('PIOS_USER_AGENT') ?? 'PriceIntelligenceOS/1.0',
     // Private/loopback targets are allowed outside production so local feeds and fixtures can be used.
     allowPrivateNetwork: bool(env('PIOS_ALLOW_PRIVATE_NETWORK'), !isProduction),
+    // Framing by other origins is refused in production unless explicitly enabled (clickjacking protection).
+    allowEmbedding: bool(env('PIOS_ALLOW_EMBEDDING'), !isProduction),
     anthropicApiKey: env('ANTHROPIC_API_KEY') ?? null,
     sessionIdleHours: 12,
     sessionAbsoluteHours: 24 * 7,

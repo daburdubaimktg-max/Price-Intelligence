@@ -16,7 +16,7 @@ import { SegmentedBar } from '@/components/charts/charts.tsx';
 import { DataClassBadge, DemoBadge, FrequencyLabel, MarketTime, MethodLabel } from '@/components/domain/domain.tsx';
 import { DATA_CLASSES, DATA_CLASS_LABELS, FREQUENCIES, FREQUENCY_LABELS, type DataClass, type Frequency } from '@shared/constants.ts';
 import type { CollectionHealth, CollectionSource, JobDataClass, SourceStatus } from '@shared/api/collection.ts';
-import { StackedColumns, type StackSegment } from './StackedColumns.tsx';
+import { StackedColumns, type StackDatum, type StackSegment } from './StackedColumns.tsx';
 import { Fact, fmtRate, JobStatusBadge, SIMULATED_RUN_NOTE, SOURCE_STATUSES, SOURCE_STATUS_META, SourceStatusBadge, ViewerTime } from './shared.tsx';
 import { cleared, JOB_FILTER_KEYS, LOG_FILTER_KEYS, SOURCE_FILTER_KEYS, useCollectionUrl, type CollectionPatch } from './url.ts';
 
@@ -85,11 +85,11 @@ function RunsPanel({
               <span className="text-[22px] leading-8 font-semibold tracking-[-0.01em] text-ink">{fmtRelative(last)}</span>
               <ViewerTime iso={last} long className="text-[12.5px] !text-ink-3" />
             </p>
-            {simulated ? (
-              <p className="mt-1 max-w-xl text-[12.5px] leading-5 text-ink-2">
-                {SIMULATED_RUN_NOTE}. The demo generator contacts no retailer; its figures are kept apart from real collection everywhere on this screen.
-              </p>
-            ) : null}
+            <p className="mt-1 max-w-xl text-[12.5px] leading-5 text-ink-2">
+              {simulated
+                ? `${SIMULATED_RUN_NOTE}. The demo generator contacts no retailer; its figures are kept apart from real collection everywhere on this screen.`
+                : 'Runs against real retailer systems only — official APIs, product feeds, permitted website extraction and data providers. Simulated demo runs are never counted here.'}
+            </p>
           </>
         ) : simulated ? (
           <p className="text-[13px] leading-5 text-ink-2">No simulated run has finished yet.</p>
@@ -139,7 +139,7 @@ function RunsPanel({
         </ul>
       </div>
 
-      <div className={cn('grid grid-cols-2 gap-x-4 gap-y-3 border-t px-4 py-3 sm:grid-cols-5', simulated ? 'border-warn/40' : 'border-line')}>
+      <div className={cn('grid grid-cols-2 gap-x-4 gap-y-3 border-t px-4 py-3 sm:grid-cols-3', simulated ? 'border-warn/40' : 'border-line')}>
         <Fact label="Runs attempted" value={fmtNumber(stats.attempts)} />
         <Fact
           label="Fully successful"
@@ -319,15 +319,14 @@ function RunsChart({ kind, health, days, refetching }: { kind: JobDataClass; hea
     { key: 'failed', label: 'Failed', color: OUTCOME_COLORS.failed },
     ...(simulated ? [] : [{ key: 'not_configured', label: 'Not configured (no attempt)', color: OUTCOME_COLORS.not_configured }]),
   ];
-  const data = health.daily.map((d) => ({
-    date: d.date,
-    values: simulated
+  const data = health.daily.map((d): StackDatum => {
+    const values: Record<string, number> = simulated
       ? { succeeded: d.simulated_succeeded, partial: d.simulated_partial, failed: d.simulated_failed }
-      : { succeeded: d.real_succeeded, partial: d.real_partial, failed: d.real_failed, not_configured: d.real_not_configured },
-  }));
+      : { succeeded: d.real_succeeded, partial: d.real_partial, failed: d.real_failed, not_configured: d.real_not_configured };
+    return { date: d.date, values };
+  });
   const observations = health.daily.map((d) => (simulated ? d.simulated_observations : d.real_observations));
-  const total = data.reduce((acc, d) => acc + Object.values(d.values).reduce((a: number, v) => a + v, 0), 0);
-  const stored = observations.reduce((a, v) => a + v, 0);
+  const total = data.reduce((acc, d) => acc + Object.values(d.values).reduce((a, v) => a + v, 0), 0);
   return (
     <ChartFrame
       title={
@@ -336,11 +335,11 @@ function RunsChart({ kind, health, days, refetching }: { kind: JobDataClass; hea
           {simulated ? <DemoBadge /> : null}
         </span>
       }
-      subtitle={simulated ? `${SIMULATED_RUN_NOTE} · last ${days} days, by outcome` : `Runs against real retailer systems · last ${days} days, by outcome`}
+      subtitle={simulated ? `${SIMULATED_RUN_NOTE} · by outcome, per UTC day` : 'Runs against real retailer systems · by outcome, per UTC day'}
       legend={<Legend items={segments.map((s) => ({ key: s.key, label: s.label, color: s.color, shape: 'rect' as const }))} />}
       table={{
         columns: ['Date', ...segments.map((s) => s.label), simulated ? 'DEMO observations' : 'Observations stored'],
-        rows: data.map((d, i) => [d.date, ...segments.map((s) => (d.values as Record<string, number>)[s.key] ?? 0), observations[i] ?? 0]),
+        rows: data.map((d, i) => [d.date, ...segments.map((s) => d.values[s.key] ?? 0), observations[i] ?? 0]),
         numeric: segments.map((_, i) => i + 1).concat(segments.length + 1),
       }}
       refetching={refetching}
@@ -350,14 +349,6 @@ function RunsChart({ kind, health, days, refetching }: { kind: JobDataClass; hea
             title={simulated ? `No simulated run in the last ${days} days` : `No real collection ran in the last ${days} days`}
             description={simulated ? 'Simulated sources have not run in this window.' : 'Runs appear here once a real source is configured and has run. Simulated demo runs are never shown in this chart.'}
           />
-        ) : undefined
-      }
-      footer={
-        total > 0 ? (
-          <>
-            <span className="num font-medium text-ink-2">{fmtNumber(stored)}</span> {simulated ? 'DEMO observations generated' : 'observations stored'} by{' '}
-            <span className="num">{fmtNumber(total)}</span> {simulated ? 'simulated runs' : 'real runs'} in this window
-          </>
         ) : undefined
       }
     >
@@ -568,8 +559,15 @@ function RetailerHealth({
             <span className="font-medium text-ink">{s.name}</span>
             {s.is_demo ? <DemoBadge /> : null}
           </div>
-          <div className="text-[11.5px] text-ink-3">
+          <div className="text-[11.5px] leading-4 text-ink-3">
             {s.market_name} · <MethodLabel method={s.method} />
+            {s.runnable ? (
+              <>
+                {' · '}
+                <FrequencyLabel frequency={s.frequency} />
+                {s.frequency_inherited ? ' (market default)' : ''}
+              </>
+            ) : null}
           </div>
         </div>
       ),
@@ -578,7 +576,7 @@ function RetailerHealth({
       key: 'status',
       header: 'Status',
       cell: (s) => (
-        <div className="max-w-[24rem] min-w-[8rem]">
+        <div className="max-w-[26rem] md:min-w-[12rem]">
           <SourceStatusBadge status={s.status} />
           <p className="mt-1 hidden text-[11.5px] leading-4 text-ink-3 md:line-clamp-2" title={s.status_reason}>
             {s.status_reason}
@@ -587,72 +585,54 @@ function RetailerHealth({
       ),
     },
     {
-      key: 'schedule',
-      header: 'Frequency · next run',
-      hideBelow: 'xl',
+      key: 'success',
+      header: 'Last success · next run',
+      hideBelow: 'md',
+      headerTitle: 'Last run that captured prices and the next time the source is due, in the market’s own time',
       cell: (s) => (
         <div className="text-[12.5px] whitespace-nowrap">
-          <div className="text-ink-2">
-            <FrequencyLabel frequency={s.frequency} />
-            {s.frequency_inherited ? <span className="text-ink-3"> · market default</span> : null}
-          </div>
+          <div>{s.last_success_at ? <MarketTime iso={s.last_success_at} timeZone={s.timezone} relative /> : <span className="text-ink-4">{s.runnable ? 'No successful run' : 'Not applicable'}</span>}</div>
           <div className="text-[11.5px] text-ink-3">
-            {s.next_run_at ? (
+            {!s.runnable ? (
+              'Not scheduled — updated by people'
+            ) : s.status === 'not_configured' ? (
+              'Will not run until configured'
+            ) : s.status === 'paused' ? (
+              'Paused'
+            ) : s.next_run_at ? (
               <>
                 Next <MarketTime iso={s.next_run_at} timeZone={s.timezone} short />
               </>
-            ) : s.runnable ? (
-              'Nothing scheduled'
             ) : (
-              'Not scheduled — updated by people'
+              'Nothing scheduled'
             )}
           </div>
         </div>
       ),
     },
     {
-      key: 'success',
-      header: 'Last success',
-      hideBelow: 'md',
-      headerTitle: 'Last run that captured prices, in the market’s own time',
-      cell: (s) =>
-        s.last_success_at ? (
-          <MarketTime iso={s.last_success_at} timeZone={s.timezone} relative />
-        ) : (
-          <span className="text-[12.5px] whitespace-nowrap text-ink-4">{s.runnable ? 'No successful run' : 'Not applicable'}</span>
-        ),
-    },
-    {
       key: 'attempt',
       header: 'Last attempt',
       hideBelow: 'lg',
+      headerTitle: 'Outcome of the most recent run: listings captured, not returned by the source, and failed',
       cell: (s) =>
         s.latest_job ? (
-          <div className="flex flex-col items-start gap-1">
+          <div className="flex min-w-[9rem] flex-col items-start gap-1">
             <JobStatusBadge status={s.latest_job.status} dataClass={s.latest_job.data_class} />
-            <span className="text-[11.5px] whitespace-nowrap text-ink-3">
-              {s.last_attempt_at ? fmtRelative(s.last_attempt_at) : DASH}
-              {s.consecutive_failures > 1 ? ` · ${s.consecutive_failures} failures in a row` : ''}
+            <span className="num text-[11.5px] leading-4 text-ink-3">
+              {s.latest_job.status === 'not_configured'
+                ? `No attempt was made · ${fmtRelative(s.latest_job.created_at)}`
+                : s.last_attempt_at
+                  ? fmtRelative(s.last_attempt_at)
+                  : fmtRelative(s.latest_job.created_at)}
+              {s.latest_job.status !== 'not_configured' && s.listings_captured_last_run !== null ? ` · ${fmtNumber(s.listings_captured_last_run)} captured` : ''}
+              {s.listings_missing_last_run ? ` · ${fmtNumber(s.listings_missing_last_run)} not returned` : ''}
+              {s.listings_failed_last_run ? <span className="text-crit-ink"> · {fmtNumber(s.listings_failed_last_run)} failed</span> : null}
+              {s.consecutive_failures > 1 ? <span className="text-crit-ink"> · {s.consecutive_failures} failures in a row</span> : null}
             </span>
           </div>
         ) : (
           <span className="text-[12.5px] whitespace-nowrap text-ink-4">{s.runnable ? 'Never attempted' : 'Not applicable'}</span>
-        ),
-    },
-    {
-      key: 'captured',
-      header: 'Last run',
-      hideBelow: 'xl',
-      headerTitle: 'Listings captured, not returned and failed in the most recent finished run',
-      cell: (s) =>
-        s.listings_captured_last_run === null ? (
-          <span className="text-[12.5px] text-ink-4">{DASH}</span>
-        ) : (
-          <span className="num text-[12.5px] whitespace-nowrap text-ink-2">
-            {fmtNumber(s.listings_captured_last_run)} captured
-            {s.listings_missing_last_run ? <span className="text-ink-3"> · {fmtNumber(s.listings_missing_last_run)} not returned</span> : null}
-            {s.listings_failed_last_run ? <span className="text-crit-ink"> · {fmtNumber(s.listings_failed_last_run)} failed</span> : null}
-          </span>
         ),
     },
     {
@@ -765,7 +745,8 @@ export function HealthTab() {
 
   const openSources = (statuses: SourceStatus[]) => set({ ...cleared(SOURCE_FILTER_KEYS), tab: 'sources', s_status: statuses.length ? statuses.join(',') : undefined });
   const data = health.data;
-  const refetching = health.isFetching && !health.isPending;
+  // dim only while a different window is loading — not on every background refresh
+  const refetching = health.isPlaceholderData;
   const showSimulated = !!data && (data.sources.simulated > 0 || data.window.simulated.attempts > 0 || !!data.last_simulated_run_at);
   const busy = data ? data.scheduler.running_jobs + data.scheduler.queued_jobs : 0;
   const realSourceCount = sources.data ? sources.data.rows.filter((s) => kindOf(s) === 'real').length : undefined;
@@ -858,7 +839,7 @@ export function HealthTab() {
             sources={sources.data?.rows}
             loading={sources.isPending}
             error={sources.isError && !sources.data ? sources.error : null}
-            refetching={sources.isFetching && !sources.isPending}
+            refetching={sources.isPlaceholderData}
             onRetry={() => void sources.refetch()}
             onOpen={(id) => set({ source: String(id) })}
             view={state.h_view === 'attention' ? 'attention' : 'all'}

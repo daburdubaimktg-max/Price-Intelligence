@@ -49,6 +49,8 @@ export const HISTORY_DEFAULTS = {
   page_size: '25' as string | undefined,
   // volatility
   vol_group: 'listing' as string | undefined,
+  // price changes by group
+  chg_group: 'retailer' as string | undefined,
 };
 
 export type HistoryState = typeof HISTORY_DEFAULTS;

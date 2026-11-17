@@ -16,6 +16,7 @@ import { ObservationsCard } from './ObservationsCard.tsx';
 import { CurrencySelect, PriceRangeFilter } from './parts.tsx';
 import { SummaryStrip, useHistorySummary } from './SummaryStrip.tsx';
 import { TimelineCard } from './TimelineCard.tsx';
+import { ChangesCard } from './ChangesCard.tsx';
 import { VolatilityCard } from './VolatilityCard.tsx';
 
 export default function HistoryPage() {
@@ -109,6 +110,7 @@ export default function HistoryPage() {
       <SummaryStrip query={summary} />
       <TimelineCard filters={filters} />
       <CompareCard filters={filters} />
+      <ChangesCard filters={filters} />
       <ObservationsCard filters={filters} />
       <VolatilityCard filters={filters} />
     </Page>

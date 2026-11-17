@@ -53,9 +53,9 @@ export function SourcesTab({ onTest }: { onTest: (retailerId: number) => void })
       key: 'status',
       header: 'Status',
       cell: (s) => (
-        <div className="max-w-[26rem] min-w-[8.5rem]">
+        <div className="max-w-[28rem] min-w-[8.5rem] lg:min-w-[15rem]">
           <SourceStatusBadge status={s.status} />
-          <p className="mt-1 hidden text-[11.5px] leading-4 text-ink-3 sm:line-clamp-3" title={s.status_reason}>
+          <p className="mt-1 hidden text-[11.5px] leading-4 text-ink-3 sm:line-clamp-2" title={s.status_reason}>
             {s.status_reason}
           </p>
         </div>
@@ -201,7 +201,7 @@ export function SourcesTab({ onTest }: { onTest: (retailerId: number) => void })
       <Card>
         <CardHeader
           title="Sources"
-          subtitle="One row per retailer. Its status says what is really happening — collecting, failing, waiting for configuration, updated by people, or generating simulated DEMO data."
+          subtitle="One row per retailer, with what is really happening at each."
           actions={
             <>
               {actions.canRun ? (
@@ -227,7 +227,7 @@ export function SourcesTab({ onTest }: { onTest: (retailerId: number) => void })
             rows={sources.data?.rows}
             rowKey={(s) => s.retailer_id}
             loading={sources.isPending}
-            refetching={sources.isFetching && !sources.isPending}
+            refetching={sources.isPlaceholderData}
             onRowClick={(s) => set({ source: String(s.retailer_id) })}
             selectedKey={state.source ? Number(state.source) : null}
             empty={

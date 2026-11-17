@@ -55,11 +55,13 @@ export function marketOverview(ctx: AppContext, days = 30): MarketOverviewRow[] 
     market_id: number; active: number; observed: number; stale: number; never_observed: number; on_promo: number; unmatched: number;
     last_observation_at: string | null; demo: number;
   }>(
-    `SELECT li.market_id, COUNT(*) AS active,
-       SUM(s.last_observed_at IS NOT NULL) AS observed,
-       SUM(CASE WHEN s.last_observed_at IS NOT NULL AND ${ageHoursSql('s.last_observed_at')} > ${STALE_HOURS_SQL} THEN 1 ELSE 0 END) AS stale,
-       SUM(s.last_observed_at IS NULL) AS never_observed,
-       SUM(CASE WHEN o.is_promo = 1 AND ${ageHoursSql('s.last_observed_at')} <= ${STALE_HOURS_SQL} THEN 1 ELSE 0 END) AS on_promo,
+    // Freshness is counted over listings matched to a catalogue product (the same population as the overview KPIs);
+    // listings still waiting to be matched are reported separately.
+    `SELECT li.market_id, SUM(li.product_id IS NOT NULL) AS active,
+       SUM(li.product_id IS NOT NULL AND s.last_observed_at IS NOT NULL) AS observed,
+       SUM(CASE WHEN li.product_id IS NOT NULL AND s.last_observed_at IS NOT NULL AND ${ageHoursSql('s.last_observed_at')} > ${STALE_HOURS_SQL} THEN 1 ELSE 0 END) AS stale,
+       SUM(li.product_id IS NOT NULL AND s.last_observed_at IS NULL) AS never_observed,
+       SUM(CASE WHEN li.product_id IS NOT NULL AND o.is_promo = 1 AND ${ageHoursSql('s.last_observed_at')} <= ${STALE_HOURS_SQL} THEN 1 ELSE 0 END) AS on_promo,
        SUM(li.product_id IS NULL) AS unmatched,
        MAX(s.last_observed_at) AS last_observation_at,
        SUM(li.listing_is_demo) AS demo

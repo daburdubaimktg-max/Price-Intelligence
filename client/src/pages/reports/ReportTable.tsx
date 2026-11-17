@@ -4,7 +4,7 @@
  * thing in every row (one brand, one currency, one data source…) is stated once above the table instead of
  * being repeated, which keeps wide tables readable without hiding anything.
  */
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { ArrowDown, ArrowUp, Minus } from 'lucide-react';
 import { currencyDecimals, DASH, fmtDate, fmtDateTime, fmtNumber, fmtPct } from '@/lib/format.ts';
 import { Pagination } from '@/components/ui/data-table.tsx';
@@ -41,13 +41,14 @@ function SignedPct({ value }: { value: number }) {
   );
 }
 
+const DEMO_SUFFIX = /\s*(?:\(DEMO\)|·\s*DEMO)$/;
+
 /** Text values that end in a DEMO marker get the same hatched stamp used everywhere else. */
 function TextValue({ text }: { text: string }) {
-  const match = /^(.*?)\s*(?:\(DEMO\)|·\s*DEMO)$/.exec(text);
-  if (match) {
+  if (DEMO_SUFFIX.test(text)) {
     return (
       <span className="inline-flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
-        {match[1]}
+        {text.replace(DEMO_SUFFIX, '')}
         <Badge tone="demo" title="Illustrative demo data — fictional, not a market observation.">
           DEMO
         </Badge>
@@ -57,7 +58,20 @@ function TextValue({ text }: { text: string }) {
   return <>{AVAILABILITY_LABELS[text as Availability] ?? text}</>;
 }
 
-function cell(column: ReportColumn, row: Row, currencyShown: boolean): ReactNode {
+/** Decimals a plain-number column needs so that every row shows the same precision (at most two). */
+function decimalsOf(table: ReportTable, key: string): number {
+  let decimals = 0;
+  for (const row of table.rows) {
+    const value = row[key];
+    if (typeof value !== 'number' || !Number.isFinite(value)) continue;
+    const rounded = Math.round(value * 100) / 100;
+    const needed = Number.isInteger(rounded) ? 0 : Number.isInteger(Math.round(rounded * 1000) / 100) ? 1 : 2;
+    if (needed > decimals) decimals = needed;
+  }
+  return decimals;
+}
+
+function cell(column: ReportColumn & { decimals?: number }, row: Row, currencyShown: boolean): ReactNode {
   const value = row[column.key];
   if (blank(value)) return <span className="text-ink-4">{DASH}</span>;
   switch (column.type) {
@@ -84,7 +98,7 @@ function cell(column: ReportColumn, row: Row, currencyShown: boolean): ReactNode
     case 'integer':
       return fmtNumber(Number(value));
     case 'number':
-      return fmtNumber(Number(value), 2);
+      return Number(value).toLocaleString('en-GB', { minimumFractionDigits: column.decimals ?? 0, maximumFractionDigits: column.decimals ?? 2 });
     case 'date':
       return fmtDate(String(value));
     case 'datetime':
@@ -105,7 +119,7 @@ function compare(a: Row, b: Row, column: ReportColumn, desc: boolean): number {
 
 interface Layout {
   /** Columns drawn in the grid. */
-  columns: Array<ReportColumn & { wrap: boolean; minWidth?: number }>;
+  columns: Array<ReportColumn & { wrap: boolean; minWidth?: number; decimals?: number }>;
   /** Text columns holding one and the same value in every row, stated once above the grid. */
   constant: Array<{ column: ReportColumn; value: string }>;
 }
@@ -116,17 +130,21 @@ function layoutOf(table: ReportTable): Layout {
   const currencyKeys = new Set(table.columns.map((c) => c.currency_key).filter(Boolean));
   for (const column of table.columns) {
     if (column.type !== 'text') {
-      columns.push({ ...column, wrap: false });
+      columns.push({ ...column, wrap: false, decimals: column.type === 'number' ? decimalsOf(table, column.key) : undefined });
       continue;
     }
     let longest = 0;
+    let stamped = false;
     let first: string | null = null;
     let same = table.rows.length > 1;
     for (const row of table.rows) {
       const text = blank(row[column.key]) ? '' : String(row[column.key]);
       if (first === null) first = text;
       else if (text !== first) same = false;
-      if (text.length > longest) longest = text.length;
+      // a trailing DEMO marker is drawn as a stamp that can drop to its own line
+      const plain = text.replace(DEMO_SUFFIX, '');
+      if (plain.length !== text.length) stamped = true;
+      if (plain.length > longest) longest = plain.length;
     }
     // the leading column identifies the row and always stays in the grid
     if (same && columns.length > 0) {
@@ -134,8 +152,11 @@ function layoutOf(table: ReportTable): Layout {
       continue;
     }
     // short labels stay on one line; longer text may wrap, but never into a sliver
-    const wrap = longest > 18 && !currencyKeys.has(column.key);
-    columns.push({ ...column, wrap, minWidth: wrap ? (longest > 44 ? 200 : longest > 28 ? 150 : 116) : undefined });
+    // In all but the widest tables a DEMO-stamped label stays on one line with its stamp.
+    const roomy = table.columns.length - constant.length <= 11;
+    const wrap = (stamped ? !roomy || longest > 22 : longest > 13) && !currencyKeys.has(column.key);
+    const width = longest > 46 ? 190 : longest > 30 ? 140 : longest > 22 ? 104 : 84;
+    columns.push({ ...column, wrap, minWidth: wrap ? (stamped ? Math.max(width, 96) : width) : undefined });
   }
   return { columns, constant };
 }
@@ -169,6 +190,37 @@ export function ReportTableView({ table, printing, label }: { table: ReportTable
   const sortKey = sort?.replace(/^-/, '');
   const desc = sort?.startsWith('-') ?? false;
 
+  // A table wider than its frame scrolls sideways on screen (and says so, because the scrollbar sits below
+  // the last row). On paper nothing can scroll, so there the full table is measured and scaled to its frame.
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const tableRef = useRef<HTMLTableElement>(null);
+  /** Frame width ÷ natural table width; below 1 when the table does not fit. */
+  const [fit, setFit] = useState(1);
+  /** True once the table being printed has been measured and is drawn scaled (a scaled table is never measured). */
+  const [scaled, setScaled] = useState(false);
+  useLayoutEffect(() => {
+    const el = wrapRef.current;
+    const tableEl = tableRef.current;
+    if (!el || !tableEl || scaled) return;
+    const update = () => {
+      const natural = tableEl.offsetWidth;
+      const next = natural > el.clientWidth + 1 ? Number((el.clientWidth / natural).toFixed(3)) : 1;
+      setFit((prev) => (Math.abs(prev - next) < 0.004 ? prev : next));
+    };
+    update();
+    if (printing) {
+      setScaled(true);
+      return;
+    }
+    const observer = new ResizeObserver(update);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [layout, shown.length, printing, scaled]);
+  useLayoutEffect(() => {
+    if (!printing) setScaled(false);
+  }, [printing]);
+  const overflowing = fit < 1;
+
   return (
     <div className="overflow-hidden rounded-[10px] border border-line bg-surface">
       {layout.constant.length ? (
@@ -182,8 +234,8 @@ export function ReportTableView({ table, printing, label }: { table: ReportTable
           <span className="text-ink-4">— the same in every row</span>
         </div>
       ) : null}
-      <div className="table-wrap">
-        <table className="grid-table is-dense">
+      <div className="table-wrap" ref={wrapRef}>
+        <table ref={tableRef} className="grid-table is-dense" style={printing && scaled && fit < 1 ? { zoom: fit } : undefined}>
           <thead>
             <tr>
               {layout.columns.map((c) => {
@@ -191,21 +243,25 @@ export function ReportTableView({ table, printing, label }: { table: ReportTable
                 const right = NUMERIC.has(c.type);
                 return (
                   <th key={c.key} scope="col" style={{ textAlign: right ? 'right' : 'left' }} aria-sort={active ? (desc ? 'descending' : 'ascending') : undefined}>
-                    <button
-                      type="button"
-                      title={`Sort by ${c.label}`}
-                      className={cn('inline-flex items-end gap-1 text-left uppercase hover:text-ink', right && 'flex-row-reverse text-right', active && 'text-ink')}
-                      onClick={() => {
-                        // numbers start with the largest, text with A; a third click returns to the report's own order
-                        const firstDesc = right;
-                        const next = !active ? (firstDesc ? `-${c.key}` : c.key) : desc === firstDesc ? (firstDesc ? c.key : `-${c.key}`) : undefined;
-                        setSort(next);
-                        setPage(1);
-                      }}
-                    >
-                      <span>{c.label}</span>
-                      {active ? desc ? <ArrowDown className="no-print mb-px size-3 shrink-0" aria-hidden /> : <ArrowUp className="no-print mb-px size-3 shrink-0" aria-hidden /> : null}
-                    </button>
+                    {printing ? (
+                      c.label
+                    ) : (
+                      <button
+                        type="button"
+                        title={`Sort by ${c.label}`}
+                        className={cn('inline-flex items-end gap-1 text-left uppercase hover:text-ink', right && 'flex-row-reverse text-right', active && 'text-ink')}
+                        onClick={() => {
+                          // numbers start with the largest, text with A; a third click returns to the report's own order
+                          const firstDesc = right;
+                          const next = !active ? (firstDesc ? `-${c.key}` : c.key) : desc === firstDesc ? (firstDesc ? c.key : `-${c.key}`) : undefined;
+                          setSort(next);
+                          setPage(1);
+                        }}
+                      >
+                        <span>{c.label}</span>
+                        {active ? desc ? <ArrowDown className="mb-px size-3 shrink-0" aria-hidden /> : <ArrowUp className="mb-px size-3 shrink-0" aria-hidden /> : null}
+                      </button>
+                    )}
                   </th>
                 );
               })}
@@ -234,6 +290,11 @@ export function ReportTableView({ table, printing, label }: { table: ReportTable
           </tbody>
         </table>
       </div>
+      {overflowing && !printing ? (
+        <p className="no-print border-t border-line bg-sunken px-3.5 py-1.5 text-[11.5px] leading-4 text-ink-3">
+          Wider than the page — scroll sideways for the remaining columns. The downloads hold every column and row.
+        </p>
+      ) : null}
       {total === 0 ? <p className="px-4 py-6 text-center text-[12.5px] text-ink-3">No rows — nothing was recorded in this period and selection that belongs in “{label}”.</p> : null}
       {printing ? (
         total > PRINT_ROWS ? (

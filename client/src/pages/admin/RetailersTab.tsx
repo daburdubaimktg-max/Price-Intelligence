@@ -4,7 +4,7 @@ import { Ellipsis, KeyRound, List, Pause, Pencil, Play, Plus, Power, ShieldAlert
 import { useQuery } from '@tanstack/react-query';
 import { apiDelete, apiGet, apiPatch, apiPost, type Paged } from '@/lib/api.ts';
 import { useCan } from '@/lib/auth.tsx';
-import { fmtNumber } from '@/lib/format.ts';
+import { fmtDateTime, fmtNumber } from '@/lib/format.ts';
 import { fromList, toList, useApiQuery, useReference, useUrlState } from '@/lib/hooks.ts';
 import { ConfirmDialog, Menu, useToast } from '@/components/ui/overlays.tsx';
 import { Badge, Button, Card, CardHeader, EmptyState, ErrorState, IconButton, Notice, Segmented } from '@/components/ui/primitives.tsx';
@@ -91,7 +91,15 @@ export function RetailersTab() {
   async function run(retailer: RetailerRow) {
     try {
       const result = await apiPost<{ job: CollectionJob }>(`/collection/retailers/${retailer.id}/run`);
-      toast.success('Collection started', `Job #${result.job.id} for ${retailer.name}. Follow it in the Data Collection Centre.`);
+      if (result.job.status === 'not_configured') {
+        // The server records the attempt, but nothing was requested from the source.
+        toast.error(`Nothing was collected — ${retailer.name} is not configured`, result.job.error_message ?? undefined);
+      } else {
+        toast.success(
+          result.job.data_class === 'simulated' ? 'Simulated demo run started' : 'Collection started',
+          `Job #${result.job.id} for ${retailer.name}. Its outcome appears in the Data Collection Centre.`,
+        );
+      }
       await refreshAll();
     } catch (err) {
       toast.error('The collection was not started', errorText(err));
@@ -227,12 +235,14 @@ export function RetailersTab() {
         <div className="text-[12.5px] whitespace-nowrap">
           <div className="text-ink-2">{r.last_success_at ? <MarketTime iso={r.last_success_at} timeZone={r.timezone} relative /> : <span className="text-ink-4">No successful run yet</span>}</div>
           <div className="text-[11.5px] text-ink-3">
-            {r.next_run_at ? (
+            {!r.next_run_at ? (
+              'Nothing scheduled'
+            ) : Date.parse(r.next_run_at) <= Date.now() ? (
+              <span title={`Due since ${fmtDateTime(r.next_run_at, r.timezone)}`}>Due now</span>
+            ) : (
               <>
                 Next <MarketTime iso={r.next_run_at} timeZone={r.timezone} short />
               </>
-            ) : (
-              'Nothing scheduled'
             )}
           </div>
         </div>
@@ -373,6 +383,7 @@ export function RetailersTab() {
       <RetailerDrawer
         retailerId={state.retailer ? Number(state.retailer) : null}
         initialTab={state.r_view === 'listings' ? 'listings' : 'source'}
+        schedulerOff={health.data ? !health.data.scheduler.enabled : false}
         onClose={() => set({ retailer: undefined, r_view: undefined })}
         onEdit={(r) => {
           setEditing(r);

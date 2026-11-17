@@ -1,5 +1,5 @@
 /** URL-synchronised filter state of the promotion screen and its translation into API query parameters. */
-import { useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { matchPreset, presetRange, type DatePreset, type Option } from '@/components/ui/filters.tsx';
 import type { Query } from '@/lib/api.ts';
 import { useDates, useReference, useUrlState, toList, type DateRange } from '@/lib/hooks.ts';
@@ -90,6 +90,13 @@ export function usePromoFilters() {
     else setScope({ range: 'custom', from: next.from ?? null, to: next.to ?? null });
   };
 
+  // The kit's `set` changes identity whenever the URL changes; memoised charts need a callback that does not.
+  const setRef = useRef(set);
+  useEffect(() => {
+    setRef.current = set;
+  });
+  const setGroup = useCallback((group: string) => setRef.current({ group }), []);
+
   const resetScope = () => {
     const patch: Partial<Record<keyof PromoParams, null>> = { page: null };
     for (const key of SCOPE_KEYS) patch[key] = null;
@@ -120,7 +127,7 @@ export function usePromoFilters() {
     return { markets, retailers, brands, categories };
   }, [ref, state.market_id]);
 
-  return { ...url, today, period, scope, query, setScope, setRange, resetScope, activeScope, options, dates, reference };
+  return { ...url, today, period, scope, query, setScope, setRange, setGroup, resetScope, activeScope, options, dates, reference };
 }
 
 export type PromoFilters = ReturnType<typeof usePromoFilters>;

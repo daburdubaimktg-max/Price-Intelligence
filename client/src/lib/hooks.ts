@@ -78,33 +78,41 @@ export function useUrlState<T extends Record<string, ParamValue>>(defaults: T) {
     return out as T;
   }, [params]);
 
-  const set = useCallback(
-    (patch: Partial<Record<keyof T, ParamValue | null>>, options: { replace?: boolean } = {}) => {
-      setParams(
-        (prev) => {
-          const next = new URLSearchParams(prev);
-          for (const [key, value] of Object.entries(patch)) {
-            if (value === undefined || value === null || value === '' || value === defaultsRef.current[key]) next.delete(key);
-            else next.set(key, String(value));
-          }
-          return next;
-        },
-        { replace: options.replace ?? true },
-      );
+  // react-router does not queue functional updates: two changes in the same tick would both start from the same
+  // URL and the second would drop the first. Changes are therefore applied to the latest pending parameters.
+  const latest = useRef(params);
+  latest.current = params;
+  const pending = useRef<URLSearchParams | null>(null);
+  useEffect(() => {
+    pending.current = null;
+  }, [params]);
+  const apply = useCallback(
+    (mutate: (next: URLSearchParams) => void, replace: boolean) => {
+      const next = new URLSearchParams(pending.current ?? latest.current);
+      mutate(next);
+      pending.current = next;
+      setParams(next, { replace });
     },
     [setParams],
   );
 
+  const set = useCallback(
+    (patch: Partial<Record<keyof T, ParamValue | null>>, options: { replace?: boolean } = {}) => {
+      apply((next) => {
+        for (const [key, value] of Object.entries(patch)) {
+          if (value === undefined || value === null || value === '' || value === defaultsRef.current[key]) next.delete(key);
+          else next.set(key, String(value));
+        }
+      }, options.replace ?? true);
+    },
+    [apply],
+  );
+
   const reset = useCallback(() => {
-    setParams(
-      (prev) => {
-        const next = new URLSearchParams(prev);
-        for (const key of Object.keys(defaultsRef.current)) next.delete(key);
-        return next;
-      },
-      { replace: true },
-    );
-  }, [setParams]);
+    apply((next) => {
+      for (const key of Object.keys(defaultsRef.current)) next.delete(key);
+    }, true);
+  }, [apply]);
 
   const activeCount = useMemo(
     () => Object.keys(defaultsRef.current).filter((key) => params.get(key) !== null && params.get(key) !== defaultsRef.current[key]).length,

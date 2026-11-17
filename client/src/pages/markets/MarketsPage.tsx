@@ -8,6 +8,7 @@ import { Page } from '@/app/AppShell.tsx';
 import { FilterBar } from '@/components/ui/filters.tsx';
 import { Card, EmptyState, ErrorState, LoadingBlock, PageHeader, Segmented } from '@/components/ui/primitives.tsx';
 import { useCan } from '@/lib/auth.tsx';
+import { apiGet } from '@/lib/api.ts';
 import { useApiQuery, useUrlState } from '@/lib/hooks.ts';
 import type { MarketOverviewRow } from '@shared/api/analytics.ts';
 import { CrossMarket } from './CrossMarket.tsx';
@@ -53,7 +54,11 @@ function MarketsView({ url }: { url: MarketUrl }) {
   const canManage = useCan('admin.settings');
   const now = useNow();
   const days = ['7', '30', '90'].includes(url.state.days ?? '') ? Number(url.state.days) : 30;
-  const q = useApiQuery<{ markets: MarketOverviewRow[] }>(['market-intel', 'overview'], '/market-intel/overview', { days });
+  // The response does not state its period, so the period travels with the data: figures still on screen from
+  // the previous period (dimmed while the new one loads) stay labelled with the period they belong to.
+  const q = useApiQuery<{ markets: MarketOverviewRow[]; days: number }>(['market-intel', 'overview'], '/market-intel/overview', { days }, {
+    queryFn: async ({ signal }) => ({ ...(await apiGet<{ markets: MarketOverviewRow[] }>('/market-intel/overview', { days }, signal)), days }),
+  });
   const refetching = q.isFetching && !q.isPending;
 
   return (
@@ -101,7 +106,7 @@ function MarketsView({ url }: { url: MarketUrl }) {
           <MarketSummary markets={q.data.markets} />
           <div className="grid gap-4 md:grid-cols-2 3xl:grid-cols-3">
             {q.data.markets.map((market) => (
-              <MarketCard key={market.id} market={market} days={days} now={now} canManage={canManage} />
+              <MarketCard key={market.id} market={market} days={q.data.days} now={now} canManage={canManage} />
             ))}
           </div>
         </div>

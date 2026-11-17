@@ -1,4 +1,5 @@
 /** Headline promotion figures for the selected period. Every number comes from GET /promotions/summary. */
+import { memo } from 'react';
 import { StatTile } from '@/components/ui/primitives.tsx';
 import { DASH, fmtNumber, fmtPct } from '@/lib/format.ts';
 import { diffDays, type DateRange } from '@/lib/hooks.ts';
@@ -7,7 +8,7 @@ import { promoTypeLabel } from './promo-meta.ts';
 
 const days = (value: number | null) => (value === null ? DASH : `${value.toFixed(1)} days`);
 
-export function PromoKpis({ summary, period }: { summary: PromotionSummary; period: DateRange }) {
+export const PromoKpis = memo(function PromoKpis({ summary, period }: { summary: PromotionSummary; period: DateRange }) {
   const k = summary.kpis;
   const periodDays = diffDays(period.from, period.to) + 1;
   const top = k.highest_discount;
@@ -65,4 +66,4 @@ export function PromoKpis({ summary, period }: { summary: PromotionSummary; peri
       />
     </div>
   );
-}
+});

@@ -103,12 +103,12 @@ export async function buildApp(overrides: Partial<Config> = {}): Promise<BuiltAp
         'img-src': ["'self'", 'data:', 'https:'],
         'font-src': ["'self'", 'data:'],
         'connect-src': ["'self'"],
-        // The app may be shown inside a preview pane or an intranet portal.
-        'frame-ancestors': null,
+        // Framing by other origins (preview panes, intranet portals) is opt-in in production: PIOS_ALLOW_EMBEDDING.
+        'frame-ancestors': config.allowEmbedding ? null : ["'self'"],
         'upgrade-insecure-requests': null,
       },
     },
-    frameguard: false,
+    frameguard: config.allowEmbedding ? false : { action: 'sameorigin' },
     crossOriginEmbedderPolicy: false,
     crossOriginResourcePolicy: false,
     crossOriginOpenerPolicy: false,

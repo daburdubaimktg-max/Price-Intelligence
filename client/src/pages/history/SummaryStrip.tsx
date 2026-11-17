@@ -33,7 +33,7 @@ export function SummaryStrip({ query }: { query: ReturnType<typeof useHistorySum
   const empty = data.observations === 0;
   return (
     <Card className={cn('mb-5 transition-opacity', isRefetching(query) && 'opacity-60')}>
-      <div className="grid grid-cols-2 gap-x-4 gap-y-4 p-4 sm:grid-cols-4 xl:grid-cols-8">
+      <div className="grid grid-cols-2 gap-x-4 gap-y-4 p-4 sm:grid-cols-3 xl:grid-cols-9">
         <Fact label="Observations" value={fmtNumber(data.observations)} detail="stored records in scope" />
         <Fact label="Listings" value={fmtNumber(data.listings)} detail="product × retailer" />
         <Fact label="Products" value={fmtNumber(data.products)} detail={`${fmtNumber(data.brands)} brand${data.brands === 1 ? '' : 's'}`} />
@@ -41,6 +41,7 @@ export function SummaryStrip({ query }: { query: ReturnType<typeof useHistorySum
         <Fact label="First observation" value={data.first_observed_at ? fmtDateTime(data.first_observed_at, 'UTC').split(',')[0]! : DASH} detail={data.first_observed_at ? `${fmtDateTime(data.first_observed_at, 'UTC').split(', ')[1]} UTC` : undefined} />
         <Fact label="Latest observation" value={data.last_observed_at ? fmtDateTime(data.last_observed_at, 'UTC').split(',')[0]! : DASH} detail={data.last_observed_at ? `${fmtDateTime(data.last_observed_at, 'UTC').split(', ')[1]} UTC` : undefined} />
         <Fact label="On promotion" value={fmtPct(data.promo_share_pct, 1)} detail={plural(data.promo_observations, 'observation')} />
+        <Fact label="Out of stock" value={fmtPct(data.out_of_stock_share_pct, 1)} detail={plural(data.out_of_stock_observations, 'observation')} />
         <Fact label="Demo records" value={fmtNumber(data.demo_observations)} detail={empty ? undefined : `${fmtPct((data.demo_observations / data.observations) * 100, 0)} of scope`} />
       </div>
 

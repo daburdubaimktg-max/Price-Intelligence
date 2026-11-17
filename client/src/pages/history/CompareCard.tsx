@@ -110,6 +110,8 @@ export function CompareCard({ filters }: { filters: HistoryFilters }) {
       { key: 'pct', header: 'Change', align: 'right', cell: (row) => <ChangeCell pct={row.delta_pct} /> },
       { key: 'promo_a', header: 'Promo A', align: 'right', cell: (row) => (row.a ? fmtPct(row.a.promo_share_pct, 0) : '—'), headerTitle: 'Share of observed listing-days on promotion in period A', hideBelow: 'md' },
       { key: 'promo_b', header: 'Promo B', align: 'right', cell: (row) => (row.b ? fmtPct(row.b.promo_share_pct, 0) : '—'), headerTitle: 'Share of observed listing-days on promotion in period B', hideBelow: 'md' },
+      { key: 'oos_a', header: 'Out of stock A', align: 'right', cell: (row) => (row.a ? fmtPct(row.a.out_of_stock_share_pct, 0) : '—'), headerTitle: 'Share of observed listing-days out of stock in period A', hideBelow: 'xl' },
+      { key: 'oos_b', header: 'Out of stock B', align: 'right', cell: (row) => (row.b ? fmtPct(row.b.out_of_stock_share_pct, 0) : '—'), headerTitle: 'Share of observed listing-days out of stock in period B', hideBelow: 'xl' },
     ];
   }, [groupBy, metric]);
 

@@ -46,6 +46,22 @@ describe('price events and the live monitor', () => {
     assert.equal(downs.rows[0].product_id, fx.compProductId);
   });
 
+  it('counts price changes per brand, retailer and market', async () => {
+    const byBrand = await get('/events/summary?group_by=brand&days=14');
+    assert.deepEqual(byBrand.totals, { increases: 2, decreases: 2, groups: 2 });
+    const own = byBrand.rows.find((r: any) => r.id === fx.ownBrandId);
+    assert.deepEqual([own.increases, own.decreases, own.avg_increase_pct, own.avg_decrease_pct, own.ownership], [2, 1, 17.5, -20, 'own']);
+    const rival = byBrand.rows.find((r: any) => r.id === fx.compBrandId);
+    assert.deepEqual([rival.increases, rival.decreases, rival.avg_increase_pct, rival.avg_decrease_pct], [0, 1, null, -10]);
+    assert.equal(byBrand.demo.any_demo, false);
+
+    const byRetailer = await get('/events/summary?group_by=retailer&days=14');
+    assert.deepEqual(byRetailer.rows.map((r: any) => [r.label, r.sublabel, r.listings, r.increases, r.decreases]), [['Test Mart', 'UAE', 2, 2, 2]]);
+    const byMarket = await get(`/events/summary?group_by=market&from=${known.date(3)}&to=${known.today}`);
+    assert.deepEqual(byMarket.rows.map((r: any) => [r.label, r.increases, r.decreases]), [['UAE', 1, 1]]);
+    assert.equal((await get('/events/summary?group_by=product&ownership=competitor&days=14')).rows.length, 1);
+  });
+
   it('shows the latest price, price per 100 ml and provenance of each listing', async () => {
     const body = await get('/monitor?sort=product');
     assert.equal(body.total, 2);
@@ -415,5 +431,49 @@ describe('currencies', () => {
     assert.equal((await t.api('GET', `/market-intel/cross-market?product_id=${fx.ownProductId}&currency=native`)).status, 400);
     assert.equal((await t.api('GET', '/market-intel/cross-market')).status, 400);
     assert.equal((await t.api('GET', `/market-intel/cross-market?product_id=${fx.ownProductId}&currency=XXX`)).status, 400);
+  });
+});
+
+describe('out-of-stock frequency', () => {
+  before(() => {
+    const res = ingestObservations(
+      t.ctx,
+      [
+        { listing_id: fx.compListingId, observed_at: known.at(5), current_price: null, availability: 'out_of_stock' },
+        { listing_id: fx.compListingId, observed_at: known.at(3), current_price: 27, regular_price: 27, availability: 'out_of_stock' },
+      ],
+      { sourceMethod: 'manual', userId: 1 },
+    );
+    assert.deepEqual(res.rejected, []);
+    assert.equal(res.inserted, 2);
+  });
+
+  it('is reported for the stored history, per series and per period', async () => {
+    // rival listing-days: T-10 in stock · T-6 in stock · T-5 out of stock (no price) · T-3 out of stock (priced)
+    const summary = await get(`/history/summary?product_id=${fx.compProductId}`);
+    assert.equal(summary.observations, 4);
+    assert.equal(summary.out_of_stock_observations, 2);
+    assert.equal(summary.out_of_stock_share_pct, 50);
+
+    const timeline = await get(`/history/timeline?product_id=${fx.compProductId}&days=14`);
+    const series = timeline.series[0];
+    assert.equal(series.observed_listing_days, 4);
+    assert.equal(series.out_of_stock_share_pct, 50);
+    assert.deepEqual(series.points.map((p: any) => [p.date, p.value]), [[known.date(10), 30], [known.date(6), 27], [known.date(3), 27]], 'an unpriced day adds no price point');
+
+    const compare = await get(`/history/compare?preset=last_7_days&group_by=product&product_id=${fx.compProductId}`);
+    assert.equal(compare.rows[0].a.out_of_stock_share_pct, 66.7); // T-6 in · T-5 out · T-3 out
+    assert.equal(compare.rows[0].b.out_of_stock_share_pct, 0);
+    assert.equal(compare.rows[0].a.avg, 27);
+
+    const own = await get(`/history/timeline?product_id=${fx.ownProductId}&market_id=${fx.marketId}&days=14`);
+    assert.equal(own.series[0].out_of_stock_share_pct, 0);
+  });
+
+  it('records the availability change as an event', async () => {
+    const events = await get(`/events?listing_id=${fx.compListingId}&kind=availability_change`);
+    assert.ok(events.rows.some((r: any) => r.old_availability === 'in_stock' && r.new_availability === 'out_of_stock'));
+    const monitor = await get(`/monitor?availability=out_of_stock`);
+    assert.deepEqual(monitor.rows.map((r: any) => r.listing_id), [fx.compListingId]);
   });
 });

@@ -19,6 +19,17 @@ import type { Conversion } from '@shared/api/analytics.ts';
 // ---------------------------------------------------------------------------------------------
 // Provenance — how an observation entered the system. These four classes are never visually confused.
 // ---------------------------------------------------------------------------------------------
+/**
+ * Identity colours of the four data classes in charts and composition bars — the same on every screen, and never
+ * the blue / orange reserved for own brands and competitors. Simulated demo data shares the amber of the DEMO stamp.
+ */
+export const DATA_CLASS_COLORS: Record<DataClass, string> = {
+  collected: '#008300',
+  imported: '#6250d6',
+  manual: '#e87ba4',
+  simulated: '#eda100',
+};
+
 const DATA_CLASS_META: Record<DataClass, { icon: LucideIcon; tone: BadgeTone; hint: string }> = {
   collected: { icon: Radio, tone: 'good', hint: 'Captured by a configured real integration (API, feed, permitted extraction or third-party provider).' },
   imported: { icon: FileSpreadsheet, tone: 'accent', hint: 'Imported from a CSV or Excel file, with its original observation date.' },

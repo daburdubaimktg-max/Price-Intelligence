@@ -100,6 +100,8 @@ export function DataTable<T>({
                   onKeyDown={
                     onRowClick
                       ? (e) => {
+                          // Only when the row itself has focus: Enter / Space on a button or link inside it belongs to that control.
+                          if (e.target !== e.currentTarget) return;
                           if (e.key === 'Enter' || e.key === ' ') {
                             e.preventDefault();
                             onRowClick(row);

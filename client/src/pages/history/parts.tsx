@@ -6,6 +6,7 @@ import { useReference } from '@/lib/hooks.ts';
 import { Popover } from '@/components/ui/overlays.tsx';
 import { Button, cn, Field, Input, Select } from '@/components/ui/primitives.tsx';
 import { SERIES_COLORS } from '@/components/charts/kit.tsx';
+import { DATA_CLASS_COLORS } from '@/components/domain/domain.tsx';
 import { DATA_CLASSES, DATA_CLASS_LABELS, type DataClass } from '@shared/constants.ts';
 import type { Metric } from '@shared/api/analytics.ts';
 
@@ -120,13 +121,7 @@ export const GROUP_LABELS = {
   ownership: 'Own brands vs competitors',
 } as const;
 
-/** Identity colours of the four data source classes (categorical slots in fixed order). */
-export const DATA_CLASS_COLORS: Record<DataClass, string> = {
-  collected: SERIES_COLORS[0],
-  imported: SERIES_COLORS[1],
-  manual: SERIES_COLORS[2],
-  simulated: SERIES_COLORS[3],
-};
+export { DATA_CLASS_COLORS };
 export const dataClassParts = (rows: Array<{ data_class: string; observations: number }>) =>
   DATA_CLASSES.map((dc) => ({ key: dc, label: DATA_CLASS_LABELS[dc], value: rows.find((r) => r.data_class === dc)?.observations ?? 0, color: DATA_CLASS_COLORS[dc] }));
 

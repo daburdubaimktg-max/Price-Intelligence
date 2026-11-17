@@ -216,17 +216,18 @@ export function TimeSeriesChart({
             </text>
           ))}
           {reference ? (
-            <g>
-              <line x1={margin.left} x2={margin.left + plotW} y1={scales.y(reference.value)} y2={scales.y(reference.value)} stroke={AXIS_TEXT} strokeWidth={1} />
-              <text x={margin.left + 4} y={scales.y(reference.value) - 5} fontSize={10.5} fill={AXIS_TEXT}>
-                {reference.label}
-              </text>
-            </g>
+            <line x1={margin.left} x2={margin.left + plotW} y1={scales.y(reference.value)} y2={scales.y(reference.value)} stroke={AXIS_TEXT} strokeWidth={1} />
           ) : null}
           {hover ? <line x1={hover.x} x2={hover.x} y1={margin.top} y2={margin.top + plotH} stroke={AXIS_TEXT} strokeWidth={1} /> : null}
           {paths.map((p) => (
             <path key={p.key} d={p.d} fill="none" stroke={p.color} strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
           ))}
+          {reference ? (
+            // drawn above the series with a surface-coloured halo so a line crossing it never hides the label
+            <text x={margin.left + 4} y={scales.y(reference.value) - 5} fontSize={10.5} fill={AXIS_TEXT} stroke="#fff" strokeWidth={3} strokeLinejoin="round" style={{ paintOrder: 'stroke' }}>
+              {reference.label}
+            </text>
+          ) : null}
           {paths.map((p) => (
             <circle key={`end-${p.key}`} cx={scales.x(p.last.day)} cy={scales.y(p.last.value)} r={4} fill={p.color} stroke="#fff" strokeWidth={2} />
           ))}

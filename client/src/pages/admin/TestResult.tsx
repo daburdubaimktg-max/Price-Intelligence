@@ -13,8 +13,10 @@ const RESULT_META: Record<string, { label: string; tone: BadgeTone }> = {
 };
 
 export function TestResultView({ result, className }: { result: CollectionTestResult; className?: string }) {
-  const headlineTone = !result.configured ? 'warn' : result.ok ? 'good' : 'crit';
-  const HeadlineIcon = !result.configured ? CircleDashed : result.ok ? CircleCheck : CircleAlert;
+  // The source answered with items, but none belongs to a configured listing yet: reachable, nothing to read prices for.
+  const reachedOnly = result.configured && !result.ok && !result.fatal && (result.items_found ?? 0) > 0 && result.listings_failed === 0;
+  const headlineTone = !result.configured || reachedOnly ? 'warn' : result.ok ? 'good' : 'crit';
+  const HeadlineIcon = !result.configured || reachedOnly ? CircleDashed : result.ok ? CircleCheck : CircleAlert;
   return (
     <div className={cn('flex flex-col gap-3', className)}>
       <Notice
@@ -25,7 +27,11 @@ export function TestResultView({ result, className }: { result: CollectionTestRe
             ? 'Not configured — no request was made'
             : result.ok
               ? 'The source answered and at least one price could be read'
-              : 'The test did not read a price'
+              : reachedOnly
+                ? 'The source answered, but no item belongs to a configured listing yet'
+                : result.fatal
+                  ? 'The test failed'
+                  : 'The test did not read a price'
         }
       >
         {!result.configured && result.missing.length ? (
@@ -34,6 +40,14 @@ export function TestResultView({ result, className }: { result: CollectionTestRe
               <li key={i}>{m}</li>
             ))}
           </ul>
+        ) : null}
+        {reachedOnly ? (
+          <p>
+            {fmtNumber(result.items_found)} item{result.items_found === 1 ? ' was' : 's were'} returned.{' '}
+            {result.would_discover > 0
+              ? `A real run would add ${fmtNumber(result.would_discover)} of them as unmatched listings for review.`
+              : 'Add listings carrying the identifier used by the source, or switch on listing discovery.'}
+          </p>
         ) : null}
         {result.fatal ? (
           <p>

@@ -51,9 +51,16 @@ export function overview(ctx: AppContext, options: { days?: number; market_ids?:
     : (db.scalar<number>(`SELECT COUNT(*) FROM products WHERE status <> 'archived'`) ?? 0);
   const rMarket = marketClause('market_id');
   const retailersTotal = db.scalar<number>(`SELECT COUNT(*) FROM retailers WHERE is_active = 1${rMarket.sql}`, rMarket.params) ?? 0;
+  // Brands with at least one live product — within the selected markets when a market filter is set.
+  const bMarket = marketClause('li.market_id');
   const brands = db.all<{ ownership: string; n: number }>(
     `SELECT b.ownership, COUNT(*) AS n FROM brands b
-     WHERE b.is_active = 1 AND EXISTS (SELECT 1 FROM products p WHERE p.brand_id = b.id AND p.status <> 'archived') GROUP BY b.ownership`,
+     WHERE b.is_active = 1 AND EXISTS (
+       SELECT 1 FROM products p WHERE p.brand_id = b.id AND p.status <> 'archived'${
+         marketIds?.length ? ` AND EXISTS (SELECT 1 FROM v_listing_info li WHERE li.product_id = p.id AND li.listing_active = 1${bMarket.sql})` : ''
+       })
+     GROUP BY b.ownership`,
+    marketIds?.length ? bMarket.params : [],
   );
   const mMarket = marketClause('id');
   const marketsActive = db.scalar<number>(`SELECT COUNT(*) FROM markets WHERE is_active = 1${mMarket.sql}`, mMarket.params) ?? 0;

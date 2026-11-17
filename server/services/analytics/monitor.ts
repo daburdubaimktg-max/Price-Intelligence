@@ -6,7 +6,7 @@ import type { Page } from '../../lib/http.ts';
 import { orderBy } from '../../lib/http.ts';
 import { listingConditions, type ObsFilter } from '../obs-filter.ts';
 import { ageHoursSql, STALE_HOURS_SQL } from './common.ts';
-import type { MonitorRow, MonitorFacets, PriceEventRow } from '../../../shared/api/analytics.ts';
+import type { EventGroupBy, MonitorRow, MonitorFacets, PriceChangeBreakdown, PriceEventRow } from '../../../shared/api/analytics.ts';
 export type { MonitorRow, MonitorFacets, PriceEventRow };
 
 export interface MonitorOptions {
@@ -200,6 +200,68 @@ export function priceEvents(ctx: AppContext, filter: ObsFilter, options: EventOp
     options.offset ?? 0,
   ]);
   return { rows, total };
+}
+
+const EVENT_GROUPS: Record<EventGroupBy, { id: string; label: string; sublabel: string; ownership: string }> = {
+  retailer: { id: 'li.retailer_id', label: 'li.retailer_name', sublabel: 'li.market_name', ownership: 'NULL' },
+  market: { id: 'li.market_id', label: 'li.market_name', sublabel: 'li.market_code', ownership: 'NULL' },
+  brand: { id: 'li.brand_id', label: 'li.brand_name', sublabel: 'NULL', ownership: 'li.ownership' },
+  category: { id: 'li.category_id', label: 'li.category_name', sublabel: 'NULL', ownership: 'NULL' },
+  product: { id: 'li.product_id', label: 'li.product_name', sublabel: 'li.brand_name', ownership: 'li.ownership' },
+};
+
+/** Price changes of a period counted per retailer, market, brand, category or product (most active first). */
+export function eventBreakdown(ctx: AppContext, filter: ObsFilter, groupBy: EventGroupBy, limit = 100): PriceChangeBreakdown {
+  const g = EVENT_GROUPS[groupBy];
+  const { conditions, params } = listingConditions(filter);
+  conditions.push(`e.kind = 'price_change'`);
+  if (filter.date_from) {
+    conditions.push('e.occurred_local_date >= ?');
+    params.push(filter.date_from);
+  }
+  if (filter.date_to) {
+    conditions.push('e.occurred_local_date <= ?');
+    params.push(filter.date_to);
+  }
+  const rows = ctx.db.all<{
+    id: number | null; label: string | null; sublabel: string | null; ownership: 'own' | 'competitor' | null; listings: number;
+    increases: number; decreases: number; avg_increase_pct: number | null; avg_decrease_pct: number | null; last_change_at: string | null; demo: number;
+  }>(
+    `SELECT ${g.id} AS id, ${g.label} AS label, ${g.sublabel} AS sublabel, ${g.ownership} AS ownership,
+       COUNT(DISTINCT e.listing_id) AS listings,
+       SUM(e.direction = 'up') AS increases, SUM(e.direction = 'down') AS decreases,
+       ROUND(AVG(CASE WHEN e.direction = 'up' THEN e.change_pct END), 1) AS avg_increase_pct,
+       ROUND(AVG(CASE WHEN e.direction = 'down' THEN e.change_pct END), 1) AS avg_decrease_pct,
+       MAX(e.occurred_at) AS last_change_at, SUM(e.is_demo) AS demo
+     FROM price_events e JOIN v_listing_info li ON li.listing_id = e.listing_id
+     WHERE ${conditions.join(' AND ')}
+     GROUP BY ${g.id}
+     ORDER BY COUNT(*) DESC, label`,
+    params,
+  );
+  const increases = rows.reduce((acc, r) => acc + r.increases, 0);
+  const decreases = rows.reduce((acc, r) => acc + r.decreases, 0);
+  const demoRows = rows.reduce((acc, r) => acc + r.demo, 0);
+  return {
+    group_by: groupBy,
+    period: { from: filter.date_from ?? null, to: filter.date_to ?? null },
+    totals: { increases, decreases, groups: rows.length },
+    rows: rows.slice(0, limit).map((r) => ({
+      key: `${groupBy}:${r.id ?? 'none'}`,
+      id: r.id,
+      label: r.label ?? 'Unmatched listings',
+      sublabel: r.sublabel,
+      ownership: r.ownership,
+      listings: r.listings,
+      increases: r.increases,
+      decreases: r.decreases,
+      avg_increase_pct: r.avg_increase_pct,
+      avg_decrease_pct: r.avg_decrease_pct,
+      last_change_at: r.last_change_at,
+      is_demo: r.demo > 0,
+    })),
+    demo: { demo_rows: demoRows, total_rows: increases + decreases, any_demo: demoRows > 0, all_demo: increases + decreases > 0 && demoRows === increases + decreases },
+  };
 }
 
 /** Daily counts of price increases / decreases (for the movement chart). */

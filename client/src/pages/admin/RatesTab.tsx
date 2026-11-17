@@ -175,6 +175,8 @@ export function RatesTab() {
   }
 
   const data = rates.data;
+  // Currencies just fetched for which a demo rate with a newer timestamp is still the latest on record.
+  const shadowed = fetchResult?.ok ? (data?.rates ?? []).filter((r) => r.is_demo && fetchResult.result.currencies.includes(r.currency)).map((r) => r.currency) : [];
   const reporting = data?.reporting_currency;
   const reportingRate = reporting === 'USD' ? 1 : data?.rates.find((r) => r.currency === reporting)?.rate;
   const columns: Array<Column<ExchangeRateRow>> = [
@@ -240,6 +242,12 @@ export function RatesTab() {
           <Notice tone="good" title={`Fetched from ${fetchResult.result.source}`}>
             {fmtNumber(fetchResult.result.inserted)} new rate{fetchResult.result.inserted === 1 ? '' : 's'} stored, {fmtNumber(fetchResult.result.unchanged)} already on record,
             published {fmtDateTime(fetchResult.result.as_of, 'UTC')} UTC. Currencies: {fetchResult.result.currencies.join(', ') || 'none of the configured currencies'}.
+            {shadowed.length ? (
+              <p className="mt-1">
+                For {shadowed.join(', ')} the table still shows the DEMO rate: its timestamp is newer than the provider’s publication time, and the newest rate on record is
+                the one in use. Removing the demo dataset (Database tab) leaves only real rates.
+              </p>
+            ) : null}
           </Notice>
         ) : (
           <Notice tone="crit" title="The provider request failed — nothing was stored">

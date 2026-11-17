@@ -152,12 +152,18 @@ export function timeline(
     days: Map<string, { sum: number; n: number; promo: number }>;
   }
   const groups = new Map<string, Acc>();
+  // Availability is counted over every observed listing-day of a group, priced or not.
+  const availability = new Map<string, { days: number; oos: number }>();
   for (const row of rows) {
     const info = listings.get(row.listing_id);
     if (!info) continue;
+    const meta = fullKey(groupMeta(info, groupBy), row, info, vc);
+    const av = availability.get(meta.key) ?? { days: 0, oos: 0 };
+    av.days += 1;
+    if (row.availability === 'out_of_stock') av.oos += 1;
+    availability.set(meta.key, av);
     const value = metricValue(row, info, vc);
     if (value === null) continue;
-    const meta = fullKey(groupMeta(info, groupBy), row, info, vc);
     let acc = groups.get(meta.key);
     if (!acc) {
       acc = { meta, listings: new Set(), demo: false, ownerships: new Set(), days: new Map() };
@@ -197,6 +203,10 @@ export function timeline(
       ref: acc.meta.ref,
       listing_count: acc.listings.size,
       is_demo: acc.demo,
+      observed_listing_days: availability.get(acc.meta.key)?.days ?? 0,
+      out_of_stock_share_pct: availability.get(acc.meta.key)?.days
+        ? round((availability.get(acc.meta.key)!.oos / availability.get(acc.meta.key)!.days) * 100, 1)
+        : null,
       points,
       stats: computeStats(points.map((p) => p.value)),
     };
@@ -257,6 +267,8 @@ export function comparePeriods(
   }
   const newSide = (): Side => ({ values: [], dates: new Set(), listings: new Set(), promo: 0 });
   const groups = new Map<string, Acc>();
+  // Availability per group and period, over every observed listing-day (priced or not).
+  const availability = new Map<string, { a: { days: number; oos: number }; b: { days: number; oos: number } }>();
   const used: DailyRow[] = [];
   for (const row of rows) {
     const inA = row.date >= a.from && row.date <= a.to;
@@ -264,10 +276,17 @@ export function comparePeriods(
     if (!inA && !inB) continue;
     const info = listings.get(row.listing_id);
     if (!info) continue;
+    const meta = fullKey(groupMeta(info, groupBy), row, info, vc);
+    const av = availability.get(meta.key) ?? { a: { days: 0, oos: 0 }, b: { days: 0, oos: 0 } };
+    for (const side of [inA ? av.a : null, inB ? av.b : null]) {
+      if (!side) continue;
+      side.days += 1;
+      if (row.availability === 'out_of_stock') side.oos += 1;
+    }
+    availability.set(meta.key, av);
     const value = metricValue(row, info, vc);
     if (value === null) continue;
     used.push(row);
-    const meta = fullKey(groupMeta(info, groupBy), row, info, vc);
     let acc = groups.get(meta.key);
     if (!acc) {
       acc = { meta, demo: false, ownerships: new Set(), a: newSide(), b: newSide() };
@@ -283,12 +302,13 @@ export function comparePeriods(
       side.promo += row.is_promo ? 1 : 0;
     }
   }
-  const sideStats = (side: Side): PeriodStats | null => {
+  const sideStats = (side: Side, av: { days: number; oos: number } | undefined): PeriodStats | null => {
     const s = computeStats(side.values);
     if (!s) return null;
     return {
       avg: s.avg, median: s.median, min: s.min, max: s.max, points: s.n, days: side.dates.size, listings: side.listings.size,
       promo_share_pct: round((side.promo / s.n) * 100, 1)!, volatility_pct: s.volatility_pct,
+      out_of_stock_share_pct: av?.days ? round((av.oos / av.days) * 100, 1)! : 0,
     };
   };
   const baseCounts = new Map<string, number>();
@@ -297,8 +317,8 @@ export function comparePeriods(
     baseCounts.set(base, (baseCounts.get(base) ?? 0) + 1);
   }
   const out: CompareRow[] = [...groups.values()].map((acc) => {
-    const sa = sideStats(acc.a);
-    const sb = sideStats(acc.b);
+    const sa = sideStats(acc.a, availability.get(acc.meta.key)?.a);
+    const sb = sideStats(acc.b, availability.get(acc.meta.key)?.b);
     const split = (baseCounts.get(acc.meta.key.split('|')[0]!) ?? 1) > 1;
     const suffix = split ? [acc.meta.currency, acc.meta.basis].filter(Boolean).join(' · ') : '';
     return {
@@ -348,11 +368,13 @@ export function historySummary(ctx: AppContext, filter: ObsFilter): HistorySumma
   const totals = ctx.db.get<{
     observations: number; listings: number; products: number; retailers: number; markets: number; brands: number;
     first_observed_at: string | null; last_observed_at: string | null; promo_observations: number | null; demo_observations: number | null;
+    out_of_stock_observations: number | null;
   }>(
     `SELECT COUNT(*) AS observations, COUNT(DISTINCT o.listing_id) AS listings, COUNT(DISTINCT li.product_id) AS products,
        COUNT(DISTINCT o.retailer_id) AS retailers, COUNT(DISTINCT o.market_id) AS markets, COUNT(DISTINCT li.brand_id) AS brands,
        MIN(o.observed_at) AS first_observed_at, MAX(o.observed_at) AS last_observed_at,
-       SUM(o.is_promo) AS promo_observations, SUM(o.is_demo) AS demo_observations
+       SUM(o.is_promo) AS promo_observations, SUM(o.is_demo) AS demo_observations,
+       SUM(o.availability = 'out_of_stock') AS out_of_stock_observations
      ${OBS_FROM} ${where.sql}`,
     where.params,
   )!;
@@ -381,6 +403,8 @@ export function historySummary(ctx: AppContext, filter: ObsFilter): HistorySumma
     last_observed_at: totals.last_observed_at,
     promo_observations: totals.promo_observations ?? 0,
     promo_share_pct: totals.observations ? round(((totals.promo_observations ?? 0) / totals.observations) * 100, 1) : null,
+    out_of_stock_observations: totals.out_of_stock_observations ?? 0,
+    out_of_stock_share_pct: totals.observations ? round(((totals.out_of_stock_observations ?? 0) / totals.observations) * 100, 1) : null,
     by_data_class: byClass,
     by_currency: [...perCurrency.entries()]
       .map(([currency, values]) => {

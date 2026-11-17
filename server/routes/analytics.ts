@@ -10,7 +10,7 @@ import { lastDays, marketToday, previousRange, type DateRange } from '../service
 import { compareProduct, latestPairs, ownProductPositions, positioning } from '../services/analytics/competitors.ts';
 import { comparePeriods, GROUP_BYS, historySummary, METRICS, timeline, volatilityRanking, type GroupBy, type Metric } from '../services/analytics/history.ts';
 import { crossMarketGroup, crossMarketProduct, marketOverview } from '../services/analytics/markets.ts';
-import { monitor, priceEvents, type PriceEventRow } from '../services/analytics/monitor.ts';
+import { eventBreakdown, monitor, priceEvents, type PriceEventRow } from '../services/analytics/monitor.ts';
 import { overview } from '../services/analytics/overview.ts';
 import { listPromotions, promotionCalendar, promotionSummary, promotionTimeline } from '../services/analytics/promotions.ts';
 import { AVAILABILITY, DATA_CLASSES, PROMO_TYPES } from '../../shared/constants.ts';
@@ -124,6 +124,18 @@ export default async function analyticsRoutes(app: FastifyInstance) {
       offset: page.offset,
     });
     return paged(result.rows, result.total, page);
+  });
+
+  /** Price changes of a period counted per retailer, market, brand, category or product. */
+  app.get('/events/summary', async (req) => {
+    const q = req.query as Query;
+    const filter = parseObsFilter(q);
+    if (!filter.date_from && !filter.date_to) {
+      const p = lastDays(marketToday(ctx), daysParam(q.days, 30));
+      filter.date_from = p.from;
+      filter.date_to = p.to;
+    }
+    return eventBreakdown(ctx, filter, oneOf(q.group_by, ['retailer', 'market', 'brand', 'category', 'product'] as const, 'retailer'));
   });
 
   // ---- historical price explorer ----------------------------------------------------------------

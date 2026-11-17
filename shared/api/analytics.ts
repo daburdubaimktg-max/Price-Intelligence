@@ -76,6 +76,10 @@ export interface TimelineSeries {
   ref: SeriesRef;
   listing_count: number;
   is_demo: boolean;
+  /** Listing-days with any observation in the period (priced or not). */
+  observed_listing_days: number;
+  /** Share of those listing-days on which the listing was out of stock. */
+  out_of_stock_share_pct: number | null;
   points: TimelinePoint[];
   stats: Stats | null;
 }
@@ -107,6 +111,8 @@ export interface PeriodStats {
   listings: number;
   promo_share_pct: number;
   volatility_pct: number;
+  /** Share of observed listing-days out of stock. */
+  out_of_stock_share_pct: number;
 }
 
 export interface CompareRow {
@@ -158,6 +164,8 @@ export interface HistorySummary {
   last_observed_at: string | null;
   promo_observations: number;
   promo_share_pct: number | null;
+  out_of_stock_observations: number;
+  out_of_stock_share_pct: number | null;
   by_data_class: Array<{ data_class: string; observations: number }>;
   /** Selling-price statistics per currency (never blended across currencies). */
   by_currency: Array<{ currency: string; observations: number; avg: number; median: number; min: number; max: number; volatility_pct: number }>;
@@ -261,6 +269,32 @@ export interface MonitorFacets {
   decreases_24h: number;
   latest_observation_at: string | null;
   demo_listings: number;
+}
+
+export type EventGroupBy = 'retailer' | 'market' | 'brand' | 'category' | 'product';
+/** Price changes detected in a period, counted per retailer, market, brand, category or product. */
+export interface PriceChangeBreakdownRow {
+  key: string;
+  id: number | null;
+  label: string;
+  sublabel: string | null;
+  ownership: 'own' | 'competitor' | null;
+  /** Listings with at least one price change in the period. */
+  listings: number;
+  increases: number;
+  decreases: number;
+  /** Average size of the increases / decreases in % (unit-free, so currencies can be mixed). */
+  avg_increase_pct: number | null;
+  avg_decrease_pct: number | null;
+  last_change_at: string | null;
+  is_demo: boolean;
+}
+export interface PriceChangeBreakdown {
+  group_by: EventGroupBy;
+  period: { from: string | null; to: string | null };
+  totals: { increases: number; decreases: number; groups: number };
+  rows: PriceChangeBreakdownRow[];
+  demo: DemoNote;
 }
 
 export interface PriceEventRow {

@@ -7,6 +7,7 @@
  * the collection scheduler. Stop the server before commands that change data, or run them from the same host:
  * SQLite allows a single writer at a time and a long-running command would make the server wait.
  */
+import './env.ts';
 import path from 'node:path';
 import { buildApp } from './app.ts';
 import { createUser, revokeUserSessions, setPassword } from './auth/auth.ts';

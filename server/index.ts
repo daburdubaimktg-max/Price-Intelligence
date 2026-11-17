@@ -3,6 +3,7 @@
  * Starts the HTTP API (and serves the built web client), prepares an empty database on first run and
  * starts the always-on collection scheduler.
  */
+import './env.ts';
 import { buildApp } from './app.ts';
 import { ensureInitialUsers } from './auth/auth.ts';
 import { ensureReferenceData } from './seed/reference.ts';

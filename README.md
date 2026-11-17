@@ -217,7 +217,8 @@ be tested for real, in *Administration → Integrations*. Until then they are sh
 Passwords are hashed with scrypt; sessions are HttpOnly, SameSite cookies with idle and absolute expiry; repeated
 failed sign-ins lock the account temporarily; writes are checked for cross-site origin; every write without an
 explicit permission is administrator-only; changes are recorded in an append-only audit log. Outbound collection
-requests cannot reach private network addresses in production unless `PIOS_ALLOW_PRIVATE_NETWORK=true`.
+requests cannot reach private network addresses in production unless `PIOS_ALLOW_PRIVATE_NETWORK=true`, and the
+app refuses to be shown inside another site's frame in production unless `PIOS_ALLOW_EMBEDDING=true`.
 
 Run it behind HTTPS (a reverse proxy with `PIOS_TRUST_PROXY=true`) on anything other than a local machine.
 
@@ -234,7 +235,7 @@ maintenance commands. See [`.env.example`](.env.example) for the full annotated 
 | `PIOS_DATA_DIR` | Database, evidence, imports, Excel copy, secret key | `./data` |
 | `PIOS_ADMIN_EMAIL`, `PIOS_ADMIN_PASSWORD` | First administrator | generated |
 | `PIOS_SEED_DEMO` | Load the demo dataset into an empty database | `true` |
-| `PIOS_SCHEDULER` | Background collection scheduler | `on` |
+| `PIOS_SCHEDULER` | Scheduled collection. `off` leaves manual runs, the Excel copy, alerts and rate refresh working | `on` |
 | `PIOS_TRUST_PROXY` | Behind a TLS-terminating proxy | `false` |
 | `PIOS_SECRET_KEY` | Key for encrypting stored credentials | generated in the data dir |
 | `ANTHROPIC_API_KEY` | Optional, for the assistant | — |
@@ -294,7 +295,7 @@ npm run typecheck
 
 The suite covers the ledger guarantees, ingestion and de-duplication, catalogue and matching, imports and exports,
 the collection engine (against local fixture servers), alerts, administration, analytics against hand-computed
-figures, reports, the assistant, and the demo dataset's labelling and removal.
+figures, reports, the assistant, access control and security headers, and the demo dataset's labelling and removal.
 
 ## Known limits
 

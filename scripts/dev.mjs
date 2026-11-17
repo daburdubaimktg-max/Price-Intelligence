@@ -17,10 +17,16 @@ const env = { ...process.env, PORT: apiPort, VITE_PORT: webPort };
 
 let stopping = false;
 
+// `--only api` or `--only web` starts just one of the two.
+const only = process.argv.includes('--only') ? process.argv[process.argv.indexOf('--only') + 1] : null;
+
 const children = [
-  { name: 'api', color: '\x1b[36m', command: process.execPath, args: ['--env-file-if-exists=.env', '--watch-path=server', '--watch-path=shared', 'server/index.ts'] },
+  // .env is read by the server itself (server/env.ts), so a missing file is not an error
+  { name: 'api', color: '\x1b[36m', command: process.execPath, args: ['--watch-path=server', '--watch-path=shared', 'server/index.ts'] },
   { name: 'web', color: '\x1b[35m', command: process.execPath, args: [path.join(root, 'node_modules', 'vite', 'bin', 'vite.js')] },
-].map((spec) => {
+]
+  .filter((spec) => !only || spec.name === only)
+  .map((spec) => {
   const child = spawn(spec.command, spec.args, { cwd: root, env, stdio: ['ignore', 'pipe', 'pipe'] });
   const prefix = process.stdout.isTTY ? `${spec.color}[${spec.name}]\x1b[0m ` : `[${spec.name}] `;
   const forward = (stream, out) => {
@@ -44,7 +50,7 @@ const children = [
     stop(code ?? 1);
   });
   return child;
-});
+  });
 
 function stop(code = 0) {
   if (stopping) return;
@@ -55,4 +61,8 @@ function stop(code = 0) {
 process.on('SIGINT', () => stop(0));
 process.on('SIGTERM', () => stop(0));
 
-console.log(`Price Intelligence OS (development)\n  web app  http://localhost:${webPort}\n  API      http://localhost:${apiPort}/api\n`);
+console.log(
+  ['Price Intelligence OS (development)', only !== 'api' ? `  web app  http://localhost:${webPort}` : null, only !== 'web' ? `  API      http://localhost:${apiPort}/api` : null, '']
+    .filter((line) => line !== null)
+    .join('\n'),
+);

@@ -83,6 +83,28 @@ export function listPromotions(ctx: AppContext, filter: ObsFilter, options: Prom
   return { rows, total };
 }
 
+export interface PromotionCounts {
+  total: number;
+  own: number;
+  competitor: number;
+  /** Distinct catalogue products with a matching promotion. */
+  products: number;
+  /** Average of the deepest discount of each promotion, in % (promotions without a discount figure are left out). */
+  avg_max_discount_pct: number | null;
+}
+
+/** Counts over every promotion that matches the filter — never over one page of them. */
+export function promotionCounts(ctx: AppContext, filter: ObsFilter, options: PromotionOptions): PromotionCounts {
+  const where = promoWhere(filter, options);
+  const row = ctx.db.get<{ total: number; own: number | null; competitor: number | null; products: number; avg: number | null }>(
+    `SELECT COUNT(*) AS total, SUM(li.ownership = 'own') AS own, SUM(li.ownership = 'competitor') AS competitor,
+       COUNT(DISTINCT li.product_id) AS products, AVG(pr.max_discount_pct) AS avg
+     ${PROMO_FROM} ${where.sql}`,
+    where.params,
+  )!;
+  return { total: row.total, own: row.own ?? 0, competitor: row.competitor ?? 0, products: row.products, avg_max_discount_pct: round(row.avg, 1) };
+}
+
 export function promotionSummary(ctx: AppContext, filter: ObsFilter, period: DateRange): PromotionSummary {
   const scoped: ObsFilter = { ...filter, date_from: period.from, date_to: period.to };
   const where = promoWhere(scoped, {});

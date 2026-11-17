@@ -4,8 +4,9 @@ import type { SqlValue } from '../../db/sqlite.ts';
 import { placeholders } from '../../db/sqlite.ts';
 import type { Page } from '../../lib/http.ts';
 import { orderBy } from '../../lib/http.ts';
-import { listingConditions, type ObsFilter } from '../obs-filter.ts';
+import { listingConditions, obsSignalColumns, tagCondition, type ObsFilter } from '../obs-filter.ts';
 import { ageHoursSql, STALE_HOURS_SQL } from './common.ts';
+import { DEAL_TAGS, isDealTag, parseDealTags, type DealTag } from '../../../shared/constants.ts';
 import type { EventGroupBy, MonitorRow, MonitorFacets, PriceChangeBreakdown, PriceEventRow } from '../../../shared/api/analytics.ts';
 export type { MonitorRow, MonitorFacets, PriceEventRow };
 
@@ -19,6 +20,8 @@ export interface MonitorOptions {
   direction?: 'up' | 'down';
   priceMin?: number;
   priceMax?: number;
+  /** Listings whose latest observation carries at least one of these deal tags. */
+  tags?: DealTag[];
   sort?: string;
 }
 
@@ -32,6 +35,7 @@ const MONITOR_SELECT = `
   o.promo_description, o.promo_ends_on, o.availability,
   (o.current_price * li.unit_factor / NULLIF(li.content_amount, 0)) AS unit_price,
   o.observed_at, o.collected_at, o.source_method, o.data_class, o.confidence,
+  ${obsSignalColumns('o')},
   COALESCE(s.obs_count, 0) AS obs_count, s.first_observed_at,
   po.current_price AS prev_price, po.observed_at AS prev_observed_at,
   pe.old_price AS change_old_price, pe.new_price AS change_new_price, pe.change_abs, pe.change_pct,
@@ -60,7 +64,14 @@ const MONITOR_SORTS: Record<string, string> = {
   change: 'pe.change_pct',
   changed_at: 'pe.occurred_at',
   observed_at: 's.last_observed_at',
+  rating: 'o.rating',
+  reviews: 'o.review_count',
+  rank: 'o.sales_rank',
 };
+
+/** A row as selected with MONITOR_SELECT: the tags are still in their stored form (a JSON array, or NULL). */
+type StoredMonitorRow = Omit<MonitorRow, 'tags'> & { tags: unknown };
+const toMonitorRow = (row: StoredMonitorRow): MonitorRow => ({ ...row, tags: parseDealTags(row.tags) });
 
 function monitorWhere(filter: ObsFilter, options: MonitorOptions): { sql: string; params: SqlValue[] } {
   const { conditions, params } = listingConditions(filter);
@@ -101,6 +112,11 @@ function monitorWhere(filter: ObsFilter, options: MonitorOptions): { sql: string
     conditions.push('o.current_price <= ?');
     params.push(options.priceMax);
   }
+  if (options.tags?.length) {
+    const tagged = tagCondition(options.tags, 'o');
+    conditions.push(tagged.sql);
+    params.push(...tagged.params);
+  }
   return { sql: `WHERE ${conditions.join(' AND ')}`, params };
 }
 
@@ -108,15 +124,17 @@ export function monitor(ctx: AppContext, filter: ObsFilter, options: MonitorOpti
   const where = monitorWhere(filter, options);
   const total = ctx.db.scalar<number>(`SELECT COUNT(*) ${MONITOR_FROM} ${where.sql}`, where.params) ?? 0;
   const order = orderBy(options.sort, MONITOR_SORTS, 's.last_observed_at DESC');
-  const rows = ctx.db.all<MonitorRow>(
-    `SELECT ${MONITOR_SELECT} ${MONITOR_FROM} ${where.sql}
-     ORDER BY ${order} NULLS LAST, li.listing_id LIMIT ? OFFSET ?`,
-    [...where.params, page.pageSize, page.offset],
-  );
+  const rows = ctx.db
+    .all<StoredMonitorRow>(
+      `SELECT ${MONITOR_SELECT} ${MONITOR_FROM} ${where.sql}
+       ORDER BY ${order} NULLS LAST, li.listing_id LIMIT ? OFFSET ?`,
+      [...where.params, page.pageSize, page.offset],
+    )
+    .map(toMonitorRow);
   // Facets describe the whole scope (dimension filters only), so the chips stay stable while toggling them.
   const base = monitorWhere(filter, {});
   const dayAgo = new Date(Date.now() - 24 * 3_600_000).toISOString();
-  const facets = ctx.db.get<MonitorFacets>(
+  const facets = ctx.db.get<Omit<MonitorFacets, 'by_tag'>>(
     `SELECT COUNT(*) AS listings,
        SUM(s.last_observed_at IS NOT NULL) AS observed,
        SUM(s.last_observed_at IS NULL) AS never_observed,
@@ -131,19 +149,28 @@ export function monitor(ctx: AppContext, filter: ObsFilter, options: MonitorOpti
      ${MONITOR_FROM} ${base.sql}`,
     [dayAgo, dayAgo, dayAgo, ...base.params],
   )!;
-  for (const key of Object.keys(facets) as Array<keyof MonitorFacets>) {
+  for (const key of Object.keys(facets) as Array<keyof typeof facets>) {
     if (facets[key] === null && key !== 'latest_observation_at') (facets as unknown as Record<string, unknown>)[key] = 0;
   }
-  return { rows, total, facets };
+  // Tags carried right now: only a fresh latest observation says something about the present.
+  const byTag = Object.fromEntries(DEAL_TAGS.map((tag) => [tag, 0])) as Record<DealTag, number>;
+  const tagRows = ctx.db.all<{ tag: string; listings: number }>(
+    `SELECT j.value AS tag, COUNT(*) AS listings
+     ${MONITOR_FROM} JOIN json_each(o.tags) j
+     ${base.sql} AND o.tags <> '[]' AND ${ageHoursSql('s.last_observed_at')} <= ${STALE_HOURS_SQL}
+     GROUP BY j.value`,
+    base.params,
+  );
+  for (const row of tagRows) if (isDealTag(row.tag)) byTag[row.tag] = row.listings;
+  return { rows, total, facets: { ...facets, by_tag: byTag } };
 }
 
 /** Latest snapshot rows for an explicit set of listings (used by product pages and comparisons). */
 export function monitorRowsFor(ctx: AppContext, filter: ObsFilter): MonitorRow[] {
   const where = monitorWhere(filter, {});
-  return ctx.db.all<MonitorRow>(
-    `SELECT ${MONITOR_SELECT} ${MONITOR_FROM} ${where.sql} ORDER BY li.market_name, li.retailer_name, li.product_name`,
-    where.params,
-  );
+  return ctx.db
+    .all<StoredMonitorRow>(`SELECT ${MONITOR_SELECT} ${MONITOR_FROM} ${where.sql} ORDER BY li.market_name, li.retailer_name, li.product_name`, where.params)
+    .map(toMonitorRow);
 }
 
 export interface EventOptions {

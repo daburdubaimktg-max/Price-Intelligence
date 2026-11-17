@@ -12,6 +12,7 @@ import { addDays, diffDays, localDate, nowIso, zonedTimeToUtc } from '../lib/tim
 import { setSetting } from '../services/core.ts';
 import { ingestObservations, type ObservationInput } from '../services/ingestion.ts';
 import { recordRate } from '../services/fx.ts';
+import type { DealTag } from '../../shared/constants.ts';
 import {
   DEMO_BRANDS, DEMO_BRAND_COMPETITORS, DEMO_CATEGORIES, DEMO_EXTRA_RATES, DEMO_MAPPINGS, DEMO_MARKET_ECONOMICS, DEMO_PRODUCTS,
   DEMO_RETAILERS, DEMO_UNMATCHED_LISTINGS, PROMO_TYPES_BY_KIND, type DemoProduct, type DemoRetailer,
@@ -19,6 +20,12 @@ import {
 import {
   demoObservation, hashSeed, keyedRandom, roundToStep, simulateDays, type DemoDayState, type DemoProfile, type SimulatedConnectorConfig,
 } from './demo-model.ts';
+
+/** Badges the demo model gives online listings; a shelf label in a store never carries them. */
+const ONLINE_ONLY_TAGS: ReadonlySet<DealTag> = new Set<DealTag>(['best_seller', 'retailer_choice']);
+
+/** Fictional third-party sellers on the demo marketplaces. */
+const DEMO_SELLERS = ['Gulf Beauty Hub', 'Daily Essentials Trading', 'Family Care Store', 'Oasis Personal Care', 'Metro Health & Beauty'];
 
 const HISTORY_DAYS = 120;
 /** Days for which collection jobs are recorded and alert rules are evaluated. */
@@ -209,6 +216,12 @@ export async function seedDemo(ctx: AppContext): Promise<Record<string, number>>
         types: PROMO_TYPES_BY_KIND[retailer.kind],
         drift: 0.05,
         oos: 0.006,
+        // Marketplaces name a seller (often a third party) and show a sales rank; stores sell everything themselves.
+        seller:
+          retailer.kind === 'marketplace' && keyedRandom(`seller:${key}`) >= 0.6
+            ? DEMO_SELLERS[Math.floor(keyedRandom(`seller-name:${key}`) * DEMO_SELLERS.length)]!
+            : retailer.name,
+        ...(retailer.kind === 'marketplace' ? { rankIn: product.subcategory } : {}),
       };
     };
 
@@ -313,7 +326,17 @@ export async function seedDemo(ctx: AppContext): Promise<Record<string, number>>
       const day = diffDays(epoch, date);
       const state = listing.states[day];
       if (!state) return null;
-      return { ...demoObservation(listing.listingId, state, at.toISOString(), epoch), ...extra };
+      const observation = { ...demoObservation(listing.listingId, state, at.toISOString(), epoch), ...extra };
+      // A shelf check (store visit, imported shelf prices) sees the offer on the shelf label, but no online
+      // rating, sales rank, seller or badge.
+      if (plan.def.method === 'manual' || plan.def.method === 'csv_import') {
+        return {
+          ...observation,
+          tags: (observation.tags ?? []).filter((tag) => !ONLINE_ONLY_TAGS.has(tag)),
+          rating: null, review_count: null, sales_rank: null, sales_rank_label: null, seller_name: null,
+        };
+      }
+      return observation;
     };
 
     interface Slot {

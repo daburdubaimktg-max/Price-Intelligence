@@ -17,7 +17,10 @@ import { sha256Hex } from '../lib/crypto.ts';
 import { AppError, badRequest, conflict, notFound, unprocessable } from '../lib/errors.ts';
 import { parseCsv, parseXlsx, toCsv, type TabularData } from '../lib/tabular.ts';
 import { nowIso, parseTimestamp, type DateOrder, type ParsedTimestamp } from '../lib/time.ts';
-import { AVAILABILITY, PACK_UNITS, type Availability, type PackUnit, type PromoType } from '../../shared/constants.ts';
+import {
+  AVAILABILITY, dealTagFromLabel, normaliseDealTags, PACK_UNITS, sortDealTags,
+  type Availability, type DealTag, type PackUnit, type PromoType,
+} from '../../shared/constants.ts';
 import { formatPack, parsePackFromText } from '../../shared/units.ts';
 import type {
   ImportBatch,
@@ -72,6 +75,13 @@ export const OBSERVATION_FIELDS: ImportFieldInfo[] = [
   { field: 'promo_description', label: 'Promo description', group: 'Promotion', required: 'no', description: 'Offer text, e.g. "Buy 2 save 20%".' },
   { field: 'promo_starts_on', label: 'Promo starts on', group: 'Promotion', required: 'no', description: 'Stated start date of the promotion.' },
   { field: 'promo_ends_on', label: 'Promo ends on', group: 'Promotion', required: 'no', description: 'Stated end date of the promotion.' },
+  { field: 'tags', label: 'Tags', group: 'Tags and signals', required: 'no', description: 'Deal tags or badges shown with the price, e.g. "Limited time deal", "Best seller" or "Extra 10% off" (English or Arabic). Separate several tags with ; or |. A plain price cut such as "Save 30%" is not a tag.' },
+  { field: 'tag_text', label: 'Tag text', group: 'Tags and signals', required: 'no', description: 'The retailer\'s own wording of the tag, e.g. "Early Yellow Friday Deal". It is also read for tags when the Tags column is blank.' },
+  { field: 'rating', label: 'Rating', group: 'Tags and signals', required: 'no', description: 'Average customer rating from 0 to 5 (4.5, or 4.5/5).' },
+  { field: 'review_count', label: 'Reviews', group: 'Tags and signals', required: 'no', description: 'Number of ratings or reviews (a whole number; 1.2K is read as 1,200).' },
+  { field: 'sales_rank', label: 'Sales rank', group: 'Tags and signals', required: 'no', description: 'Position in the retailer\'s sales ranking: 3, or the full wording such as "#3 in Shampoos".' },
+  { field: 'sales_rank_label', label: 'Sales rank label', group: 'Tags and signals', required: 'no', description: 'The ranking the position refers to, e.g. "#3 in Shampoos".' },
+  { field: 'seller_name', label: 'Seller', group: 'Tags and signals', required: 'no', description: 'Who sells the item on the listing: the retailer itself or a marketplace seller.' },
   { field: 'availability', label: 'Availability', group: 'Other', required: 'no', description: 'In stock, limited, out of stock or unknown.' },
   { field: 'product_url', label: 'Product URL', group: 'Other', required: 'no', description: 'URL where the price was seen.' },
   { field: 'confidence', label: 'Confidence', group: 'Other', required: 'no', description: 'Evidence confidence: 0–1, 0–100 or high / medium / low.' },
@@ -123,6 +133,13 @@ const OBSERVATION_SYNONYMS: Record<string, string[]> = {
   product_url: ['producturl', 'observedurl', 'pageurl', 'productlink', 'productpageurl'],
   confidence: ['confidence', 'extractionconfidence', 'confidencescore', 'evidenceconfidence'],
   note: ['note', 'notes', 'comment', 'comments', 'remark', 'remarks'],
+  tags: ['tags', 'tag', 'dealtags', 'dealtag', 'badges', 'badge', 'dealbadge', 'dealbadges', 'deallabel', 'labels'],
+  tag_text: ['tagtext', 'tagwording', 'badgetext', 'dealtext', 'dealtagtext', 'retailertag', 'taglabel'],
+  rating: ['rating', 'ratings', 'starrating', 'stars', 'averagerating', 'avgrating', 'customerrating', 'productrating', 'reviewrating'],
+  review_count: ['reviews', 'reviewcount', 'reviewscount', 'numberofreviews', 'noofreviews', 'totalreviews', 'ratingcount', 'ratingscount', 'numberofratings'],
+  sales_rank: ['salesrank', 'rank', 'ranking', 'bestsellerrank', 'bestsellersrank', 'bsr', 'categoryrank'],
+  sales_rank_label: ['salesranklabel', 'ranklabel', 'ranktext', 'rankcategory', 'salesranktext', 'salesrankcategory'],
+  seller_name: ['seller', 'sellername', 'soldby', 'merchant', 'merchantname', 'vendor', 'vendorname'],
 };
 
 const PRODUCT_SYNONYMS: Record<string, string[]> = {
@@ -563,6 +580,102 @@ export function parsePromoType(text: string): PromoType | null {
   return 'other';
 }
 
+const BLANK_WORDS = /^(n\/?a|na|null|none|-|–|—)$/i;
+
+/** "4.5", "4,5", "4.5/5", "4.5 out of 5", "4.5 stars" → 4.5. Blank → null. */
+export function parseRating(text: string): Parsed<number | null> {
+  const raw = text.trim();
+  if (!raw || BLANK_WORDS.test(raw)) return ok(null);
+  const m = /^(\d+(?:[.,]\d+)?)\s*(?:\/\s*5|(?:out\s+)?of\s+5|stars?|★)?$/i.exec(raw);
+  const value = m ? Number(m[1]!.replace(',', '.')) : Number.NaN;
+  if (!Number.isFinite(value) || value < 0 || value > 5) return fail(`"${raw}" is not a rating (use a number from 0 to 5, e.g. 4.5)`);
+  return ok(value);
+}
+
+/** "1280", "1,280", "(1 280)", "1,280 ratings", "1.2K" → whole number. Blank → null. */
+export function parseCount(text: string, what: string): Parsed<number | null> {
+  const raw = text.trim();
+  if (!raw || BLANK_WORDS.test(raw)) return ok(null);
+  const m = /^\(?\s*([\d.,\s\u00A0']+?)\s*([km])?\+?\s*\)?\s*(?:(?:global\s+)?(?:ratings?|reviews?))?$/i.exec(raw);
+  if (m) {
+    const digits = m[1]!.trim();
+    const suffix = m[2]?.toLowerCase();
+    let value = Number.NaN;
+    if (suffix) value = Math.round(Number(digits.replace(/[\s\u00A0']/g, '').replace(',', '.')) * (suffix === 'k' ? 1_000 : 1_000_000));
+    else if (/^\d+$/.test(digits)) value = Number(digits);
+    else if (/^\d{1,3}(?:[.,\s\u00A0']\d{3})+$/.test(digits)) value = Number(digits.replace(/\D/g, ''));
+    else if (/^\d+[.,]0+$/.test(digits)) value = Number(digits.split(/[.,]/)[0]);
+    if (Number.isSafeInteger(value) && value >= 0) return ok(value);
+  }
+  return fail(`"${raw}" is not a ${what} (use a whole number, e.g. 1280)`);
+}
+
+/** "3", "#3", "#3 in Shampoos" → the position, plus the full wording as the label when it says more than the number. */
+export function parseSalesRank(text: string): Parsed<{ rank: number | null; label: string | null }> {
+  const raw = text.trim();
+  if (!raw || BLANK_WORDS.test(raw)) return ok({ rank: null, label: null });
+  const m = /^(?:#|no\.?\s*|rank\s*#?)?\s*(\d{1,3}(?:[,\s\u00A0]\d{3})+|\d+)(?:\.0+)?(?![\d.,])\s*(.*)$/i.exec(raw);
+  if (!m) return fail(`"${raw}" is not a sales rank (use a whole number such as 3, or wording such as "#3 in Shampoos")`);
+  return ok({ rank: Number(m[1]!.replace(/\D/g, '')), label: m[2]!.trim() ? raw : null });
+}
+
+/** Entries of a "Tags" cell: separated by ; or | or line breaks, or a JSON list. Commas only separate exact keys / labels. */
+function splitTagCell(text: string): string[] {
+  const raw = text.trim();
+  if (!raw) return [];
+  if (raw.startsWith('[')) {
+    try {
+      const parsed: unknown = JSON.parse(raw);
+      if (Array.isArray(parsed)) return parsed.map((entry) => String(entry).trim()).filter(Boolean);
+    } catch {
+      // not JSON: read as plain wording
+    }
+  }
+  return raw
+    .split(/[|;\r\n]+/)
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .flatMap((part) => {
+      const pieces = part.split(',').map((piece) => piece.trim()).filter(Boolean);
+      return pieces.length > 1 && pieces.every((piece) => dealTagFromLabel(piece)) ? pieces : [part];
+    });
+}
+
+/**
+ * Reads the "Tags" and "Tag text" cells of a row. Tag keys and labels (as written by our own exports) are taken
+ * as they are; any other wording goes through normaliseDealTags and is kept as the tag text, so wording that is
+ * not recognised ends up as "Other tag" with the retailer's words preserved. A plain price cut is not a tag.
+ */
+export function parseTagCells(tagsCell: string, tagTextCell: string): { tags: DealTag[]; tag_text: string | null } {
+  const entries = splitTagCell(tagsCell);
+  const tags = new Set<DealTag>();
+  const recognised: string[] = [];
+  const unrecognised: string[] = [];
+  let namedOther = false;
+  for (const entry of entries) {
+    const key = dealTagFromLabel(entry);
+    if (key) {
+      tags.add(key);
+      if (key === 'other') namedOther = true;
+      continue;
+    }
+    const derived = normaliseDealTags([entry]);
+    if (derived.length === 0) continue; // a plain price cut is not a tag
+    if (derived.length === 1 && derived[0] === 'other') unrecognised.push(entry);
+    else recognised.push(entry);
+    for (const tag of derived) tags.add(tag);
+  }
+  let tagText = tagTextCell.trim() || null;
+  if (entries.length === 0 && tagText) for (const tag of normaliseDealTags([tagText])) tags.add(tag);
+  // "Other tag" only says that nothing was recognised: next to a recognised tag it adds nothing.
+  if (tags.size > 1 && !namedOther) tags.delete('other');
+  if (!tagText) {
+    const kept = tags.has('other') ? [...recognised, ...unrecognised] : recognised;
+    if (kept.length) tagText = kept.join('; ');
+  }
+  return { tags: sortDealTags(tags), tag_text: tagText };
+}
+
 /** Like parseTimestamp, but honours the UTC option and keeps fractional seconds of naive timestamps. */
 export function parseImportTimestamp(text: string, timeZone: string, order: DateOrder, mode: 'market' | 'utc'): ParsedTimestamp | null {
   const value = text.trim();
@@ -951,6 +1064,13 @@ function analyseObservations(
     if (!endsOn.ok) return problem(endsOn.error, 'promo_ends_on');
     const currency = get(record, 'currency').toUpperCase();
     if (currency && !/^[A-Z]{3}$/.test(currency)) return problem(`"${get(record, 'currency')}" is not a currency code (use e.g. AED)`, 'currency');
+    const rating = parseRating(get(record, 'rating'));
+    if (!rating.ok) return problem(rating.error, 'rating');
+    const reviews = parseCount(get(record, 'review_count'), 'number of reviews');
+    if (!reviews.ok) return problem(reviews.error, 'review_count');
+    const rank = parseSalesRank(get(record, 'sales_rank'));
+    if (!rank.ok) return problem(rank.error, 'sales_rank');
+    const tagged = parseTagCells(get(record, 'tags'), get(record, 'tag_text'));
 
     const discounted = discount.value !== null && discount.value > 0;
     const input: ObservationInput = {
@@ -972,6 +1092,13 @@ function analyseObservations(
       product_url: get(record, 'product_url') || null,
       confidence: confidence.value ?? options.default_confidence,
       note: get(record, 'note') || null,
+      tags: tagged.tags.length ? tagged.tags : null,
+      tag_text: tagged.tag_text,
+      rating: rating.value,
+      review_count: reviews.value,
+      sales_rank: rank.value.rank,
+      sales_rank_label: get(record, 'sales_rank_label') || rank.value.label,
+      seller_name: get(record, 'seller_name') || null,
     };
     let normalised: NormalisedObservation;
     try {
@@ -1081,6 +1208,12 @@ function analyseObservations(
       promo_type: row.normalised.promo_type,
       availability: row.normalised.availability,
       confidence: row.normalised.confidence,
+      tags: row.normalised.tags,
+      tag_text: row.normalised.tag_text,
+      rating: row.normalised.rating,
+      review_count: row.normalised.review_count,
+      sales_rank: row.normalised.sales_rank,
+      seller_name: row.normalised.seller_name,
     }),
   );
   return { rows, pending, issues, warnings, summary, preview };
@@ -1779,6 +1912,12 @@ const OBSERVATION_TEMPLATE: { columns: ColumnSpec[]; rows: Record<string, unknow
     { key: 'promo_starts_on', header: 'Promo starts on', type: 'text', width: 16 },
     { key: 'promo_ends_on', header: 'Promo ends on', type: 'text', width: 16 },
     { key: 'availability', header: 'Availability', type: 'text', width: 14 },
+    { key: 'tags', header: 'Tags', type: 'text', width: 30 },
+    { key: 'tag_text', header: 'Tag text', type: 'text', width: 26 },
+    { key: 'rating', header: 'Rating', type: 'number', width: 9 },
+    { key: 'review_count', header: 'Reviews', type: 'integer', width: 10 },
+    { key: 'sales_rank', header: 'Sales rank', type: 'text', width: 20 },
+    { key: 'seller_name', header: 'Seller', type: 'text', width: 20 },
     { key: 'currency', header: 'Currency', type: 'text', width: 10 },
     { key: 'product_url', header: 'Product URL', type: 'text', width: 34 },
     { key: 'confidence', header: 'Confidence', type: 'text', width: 12 },
@@ -1788,13 +1927,16 @@ const OBSERVATION_TEMPLATE: { columns: ColumnSpec[]; rows: Record<string, unknow
     {
       retailer: 'Example Retailer', market: 'AE', listing_code: null, sku: 'EXAMPLE-SKU-001', gtin: null, observed_at: '2026-01-15 09:30',
       regular_price: 15.5, current_price: 12.95, promo_price: null, discount_pct: null, promo_type: 'Price cut', promo_description: 'Save 15%',
-      promo_starts_on: '2026-01-10', promo_ends_on: '2026-01-20', availability: 'In stock', currency: 'AED',
-      product_url: 'https://www.example.com/product/123', confidence: 'High', note: EXAMPLE_NOTE,
+      promo_starts_on: '2026-01-10', promo_ends_on: '2026-01-20', availability: 'In stock',
+      tags: 'Limited time deal; Best seller', tag_text: null, rating: 4.5, review_count: 1280, sales_rank: '#3 in Hair Oils', seller_name: 'Example Retailer',
+      currency: 'AED', product_url: 'https://www.example.com/product/123', confidence: 'High', note: EXAMPLE_NOTE,
     },
     {
       retailer: 'Example Retailer', market: 'AE', listing_code: 'LST-000000', sku: null, gtin: null, observed_at: '2026-01-16',
       regular_price: 15.5, current_price: 15.5, promo_price: null, discount_pct: null, promo_type: null, promo_description: null,
-      promo_starts_on: null, promo_ends_on: null, availability: 'In stock', currency: 'AED', product_url: null, confidence: 'Medium', note: EXAMPLE_NOTE,
+      promo_starts_on: null, promo_ends_on: null, availability: 'In stock',
+      tags: null, tag_text: null, rating: null, review_count: null, sales_rank: null, seller_name: null,
+      currency: 'AED', product_url: null, confidence: 'Medium', note: EXAMPLE_NOTE,
     },
   ],
 };

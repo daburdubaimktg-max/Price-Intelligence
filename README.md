@@ -9,8 +9,10 @@ history into monitoring, comparisons, promotion analysis, alerts and reports.
 | Section | What it does |
 | --- | --- |
 | Overview | Headline figures, price movement, own vs competitor position, recent changes, promotions, markets |
-| Live Price Monitor | Latest price, unit price, promotion, availability and freshness of every listing |
+| Live Price Monitor | Latest price, unit price, promotion, deal tags, availability and freshness of every listing |
+| Deals | Listings on offer right now — tagged deals, promotions and prices below the regular price — with the context of their own history (30-day average, 90-day low, on deal since) |
 | Product Catalogue | Products, variants, brands, categories, CSV / Excel import, listing matching, competitor mappings |
+| Brand Explorer | Brand by brand: the range, a price matrix across retailers and markets, the trend, and the brands it competes with |
 | Competitor Intelligence | Own product vs mapped competitors: prices, price per 100 ml / 100 g, gaps, history |
 | Historical Price Explorer | Any slice of the ledger by retailer, product, brand, market, date, price, promotion, availability; period comparisons |
 | Promotion Intelligence | Promotions detected from observations: depth, duration, frequency, timeline |
@@ -113,6 +115,38 @@ what it needs, and **Failing** when a run did not succeed.
 
 Credentials are stored encrypted and never shown again. "Test connection" performs a real request and reports what
 actually happened.
+
+**Deal tags and signals.** What a retailer shows next to a price is kept with the observation, historically, like
+the price itself: the deal tag ("Limited time deal", "Yellow Friday Deal", "Lowest price in 30 days", coupons,
+multi-buy offers), badges (best seller, the retailer's choice, selling fast), the rating and number of reviews, the
+sales rank and the seller. The retailer's own wording is stored alongside the tag. A plain "Save 30 %" is a price
+cut, not a tag. Tags arrive through every route: a *Tags* column in imports, the manual-entry form, and the field
+mapping of feeds and provider snapshots.
+
+**Provider snapshots (third-party data integration).** A data provider collects on its own schedule and delivers a
+snapshot; this system reads the latest one. The mapping understands what such snapshots look like:
+
+| Mapping option | Meaning |
+| --- | --- |
+| `sale_price \|\| price` | Alternatives: the first field that has a value is used |
+| Tag / badge fields | Fields holding the tags shown with the price — one text, a list of texts or a list of objects with a text. "#3 in Shampoos" is read as the sales rank |
+| Yes/no fields that mean a badge | e.g. `is_bestseller` → "Best seller" |
+| Rating, reviews, sales rank, seller | Stored with the observation |
+| Observation time: the item's own timestamp | Each price is dated when the provider saw it, so reading an unchanged snapshot twice adds nothing |
+
+A list price below the selling price, or more than ten times above it, is not stored as the regular price (the
+observation says so). For Apify, schedule a *task* per retailer site in your own Apify account, store your API token
+as the source credential and point the source at
+`https://api.apify.com/v2/actor-tasks/<TASK_ID>/runs/last/dataset/items?status=SUCCEEDED&clean=true&format=json`;
+a ready-made template is offered when you configure a third-party source.
+
+**First load of a large catalogue.** Thousands of products cannot be created by hand. `load-catalogue` (see
+*Maintenance commands*) reads one prepared JSON file — retailers, products, the listings that belong to them, the
+basis of every match, and optionally the observed price of each listing with its tags — and loads it through the
+same ledger rules as everything else. It is idempotent, never creates demo data, keeps the raw files you name as
+evidence, records why each listing was matched to its product, and raises no alerts for the first observation of a
+listing. `--dry-run` reports what would happen and stores nothing. The file format is documented at the top of
+`server/services/catalogue-load.ts`.
 
 **Collection rules built in**
 
@@ -253,6 +287,9 @@ npm run db:status
 | `npm run db:seed-demo` / `npm run db:purge-demo` | Load / remove the demo dataset |
 | `npm run db:export-excel` | Write the whole database as an Excel workbook |
 | `npm run db:backup` | Write a consistent copy of the database file |
+| `npm run cli -- load-catalogue <file.json> [--dry-run] [--update-products]` | Load a prepared catalogue file: retailers, products, listings and the price observed for each listing. `--update-products` also brings products that are already on record in line with the file |
+| `npm run cli -- suggest-mappings [--min-retailers N]` | Propose competitor pairings for own products (never approved automatically); with `N`, only for own products listed at N retailers or more |
+| `npm run cli -- fetch-rates` | Fetch the latest exchange rates from the configured provider |
 | `npm run cli -- create-admin <email> [name]` | Create an administrator with a one-time password |
 | `npm run cli -- reset-password <email>` | Reset a password and sign the user out everywhere |
 
@@ -294,13 +331,18 @@ npm run typecheck
 ```
 
 The suite covers the ledger guarantees, ingestion and de-duplication, catalogue and matching, imports and exports,
-the collection engine (against local fixture servers), alerts, administration, analytics against hand-computed
-figures, reports, the assistant, access control and security headers, and the demo dataset's labelling and removal.
+the collection engine (against local fixture servers), provider snapshots with tags, the bulk catalogue load, deal
+tags and the Deals and Brand Explorer figures, alerts, administration, analytics against hand-computed figures,
+reports, the assistant, access control and security headers, and the demo dataset's labelling and removal.
 
 ## Known limits
 
 - Website extraction does not execute JavaScript (see above).
 - No retailer integration is pre-configured; each needs the access and credentials described above.
+- Price context on the Deals page (30-day average, 90-day low) needs history: it fills in as days are collected.
+- Listings are matched to the same product on a barcode, on the retailer's own item id across its country sites, or
+  on brand, product type, pack size and identical name words. Products that retailers describe differently stay
+  separate until a person matches them.
 - The Claude-backed interpretation of assistant questions is implemented and unit-tested with a stand-in, but has
   not been exercised against the live API in this repository's test run (it needs your key).
 - Single-node by design (SQLite). Run one server process per data directory.

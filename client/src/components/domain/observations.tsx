@@ -27,6 +27,7 @@ import type { EvidenceRecord, ManualObservationInput, ManualObservationResponse,
 import {
   AvailabilityBadge, ConfidenceBadge, DataClassBadge, DemoBadge, FreshnessCell, MarketTime, OwnershipBadge, PriceCell, PromoBadge, UnitPriceCell,
 } from './domain.tsx';
+import { DealTagChips, hasSignals, signalItems, SignalLine } from './signals.tsx';
 
 const BASIS_TEXT: Record<string, string> = {
   exact: 'Exact time from the source',
@@ -155,6 +156,7 @@ export function ObservationDrawer({ observationId, onClose, onChanged }: Observa
               <ConfidenceBadge value={o.confidence} />
               {o.is_promo ? <PromoBadge type={o.promo_type} discount={o.discount_pct} description={o.promo_description} /> : null}
               <AvailabilityBadge value={o.availability} />
+              <DealTagChips tags={o.tags} tagText={o.tag_text} />
             </div>
 
             <section>
@@ -186,6 +188,14 @@ export function ObservationDrawer({ observationId, onClose, onChanged }: Observa
                 ]}
               />
             </section>
+
+            {hasSignals(o) ? (
+              <section>
+                <h4 className="eyebrow mb-2">Shown with the price</h4>
+                <DescriptionList items={signalItems(o)} />
+                <p className="mt-2 text-[12px] leading-4 text-ink-3">Tags, rating, rank and seller as the retailer showed them at this observation. They are kept with it, like the price.</p>
+              </section>
+            ) : null}
 
             <section>
               <h4 className="eyebrow mb-2">When</h4>
@@ -305,6 +315,8 @@ export function ListingDrawer({ listingId, onClose }: ListingDrawerProps) {
   });
 
   const l = listing.data;
+  // tags, rating, rank and seller belong to an observation; the latest one describes the listing as it is now
+  const latestSignals = recent.data?.rows.find((r) => r.id === l?.latest?.observation_id) ?? null;
   const series = history.data?.series[0];
   const chartSeries = useMemo(
     () => (series ? [{ key: series.key, label: 'Selling price', points: series.points.map((p) => ({ date: p.date, value: p.value, promo: p.promo > 0 })) }] : []),
@@ -314,7 +326,20 @@ export function ListingDrawer({ listingId, onClose }: ListingDrawerProps) {
   const columns: Array<Column<ObservationRecord>> = [
     { key: 'when', header: 'Observed', cell: (r) => <MarketTime iso={r.observed_at} timeZone={r.timezone} short /> },
     { key: 'price', header: 'Price', align: 'right', cell: (r) => <PriceCell price={r.current_price} regular={r.regular_price} currency={r.currency_code} isPromo={r.is_promo} showCurrency={false} /> },
-    { key: 'promo', header: 'Offer', cell: (r) => (r.is_promo ? <PromoBadge type={r.promo_type} discount={r.discount_pct} description={r.promo_description} /> : <span className="text-ink-4">{DASH}</span>), hideBelow: 'sm' },
+    {
+      key: 'promo',
+      header: 'Offer · tags',
+      hideBelow: 'sm',
+      cell: (r) =>
+        r.is_promo || r.tags.length ? (
+          <span className="flex max-w-56 flex-wrap items-center gap-1">
+            {r.is_promo ? <PromoBadge type={r.promo_type} discount={r.discount_pct} description={r.promo_description} /> : null}
+            <DealTagChips tags={r.tags} tagText={r.tag_text} max={2} />
+          </span>
+        ) : (
+          <span className="text-ink-4">{DASH}</span>
+        ),
+    },
     { key: 'avail', header: 'Availability', cell: (r) => <AvailabilityBadge value={r.availability} />, hideBelow: 'sm' },
     { key: 'source', header: 'Source', cell: (r) => <DataClassBadge value={r.data_class} short /> },
   ];
@@ -390,6 +415,14 @@ export function ListingDrawer({ listingId, onClose }: ListingDrawerProps) {
                 <div className="text-[12px] text-ink-3">{fmtNumber(l.obs_count)} observations</div>
               </div>
             </div>
+
+            {latestSignals && hasSignals(latestSignals) ? (
+              <section aria-label="Shown with the latest price" className="-mt-1 flex flex-col gap-1.5 rounded-lg border border-line bg-sunken px-3 py-2.5">
+                <div className="eyebrow">Shown with the latest price</div>
+                <DealTagChips tags={latestSignals.tags} tagText={latestSignals.tag_text} variant="full" />
+                <SignalLine signals={latestSignals} className="text-[12.5px]" />
+              </section>
+            ) : null}
 
             <ChartFrame
               title="Selling price history"

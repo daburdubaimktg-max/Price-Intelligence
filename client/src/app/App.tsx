@@ -13,6 +13,9 @@ const ProductDetail = lazy(() => import('@/pages/catalogue/ProductDetailPage.tsx
 const Competitors = lazy(() => import('@/pages/competitors/CompetitorsPage.tsx'));
 const HistoryExplorer = lazy(() => import('@/pages/history/HistoryPage.tsx'));
 const Promotions = lazy(() => import('@/pages/promotions/PromotionsPage.tsx'));
+const Deals = lazy(() => import('@/pages/deals/DealsPage.tsx'));
+const Brands = lazy(() => import('@/pages/brands/BrandsPage.tsx'));
+const BrandDetail = lazy(() => import('@/pages/brands/BrandDetailPage.tsx'));
 const Markets = lazy(() => import('@/pages/markets/MarketsPage.tsx'));
 const Alerts = lazy(() => import('@/pages/alerts/AlertsPage.tsx'));
 const Collection = lazy(() => import('@/pages/collection/CollectionPage.tsx'));
@@ -34,6 +37,9 @@ export function App() {
         <Route path="competitors" element={<Competitors />} />
         <Route path="history" element={<HistoryExplorer />} />
         <Route path="promotions" element={<Promotions />} />
+        <Route path="deals" element={<Deals />} />
+        <Route path="brands" element={<Brands />} />
+        <Route path="brands/:id" element={<BrandDetail />} />
         <Route path="markets" element={<Markets />} />
         <Route path="alerts" element={<Alerts />} />
         <Route path="collection" element={<Collection />} />

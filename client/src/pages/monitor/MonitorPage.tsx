@@ -11,6 +11,7 @@ import { DATA_CLASSES, DATA_CLASS_LABELS } from '@shared/constants.ts';
 import { Page } from '@/app/AppShell.tsx';
 import { DemoBadge } from '@/components/domain/domain.tsx';
 import { ListingDrawer, ManualObservationDialog } from '@/components/domain/observations.tsx';
+import { dealTagOptions } from '@/components/domain/signals.tsx';
 import { DataTable, Pagination } from '@/components/ui/data-table.tsx';
 import { FilterBar, MultiSelect, SearchInput, type Option } from '@/components/ui/filters.tsx';
 import { Button, Card, cn, EmptyState, ErrorState, IconButton, PageHeader, Segmented } from '@/components/ui/primitives.tsx';
@@ -30,6 +31,8 @@ type MonitorState = {
   category_id: string | undefined;
   product_id: string | undefined;
   data_class: string | undefined;
+  /** Deal tag keys, comma-separated: listings whose latest observation carries at least one of them. */
+  tag: string | undefined;
   ownership: string | undefined;
   q: string | undefined;
   promo: string | undefined;
@@ -52,6 +55,7 @@ const DEFAULTS: MonitorState = {
   category_id: undefined,
   product_id: undefined,
   data_class: undefined,
+  tag: undefined,
   ownership: 'all',
   q: undefined,
   promo: undefined,
@@ -118,6 +122,7 @@ export default function MonitorPage() {
       category_id: state.category_id,
       product_id: state.product_id,
       data_class: state.data_class,
+      tag: state.tag,
       ownership: state.ownership === 'own' || state.ownership === 'competitor' ? state.ownership : undefined,
       q: state.q,
       promo: state.promo,
@@ -201,8 +206,11 @@ export default function MonitorPage() {
   };
 
   const dimensionFilters =
-    (['market_id', 'retailer_id', 'brand_id', 'category_id', 'data_class'] as const).filter((k) => !!state[k]).length + (state.ownership && state.ownership !== 'all' ? 1 : 0);
+    (['market_id', 'retailer_id', 'brand_id', 'category_id', 'data_class', 'tag'] as const).filter((k) => !!state[k]).length + (state.ownership && state.ownership !== 'all' ? 1 : 0);
   const facets = data?.facets;
+  // counts say how many fresh listings currently carry each tag; tags that do not occur are not offered
+  const selectedTags = toList(state.tag);
+  const tagOptions = dealTagOptions(facets?.by_tag, selectedTags);
   const filtered = activeCount - (state.sort !== DEFAULTS.sort ? 1 : 0) - (state.page !== DEFAULTS.page ? 1 : 0) > 0;
 
   const refreshAll = () => {
@@ -237,6 +245,7 @@ export default function MonitorPage() {
             <MultiSelect label="Brand" options={options.brand} value={toList(state.brand_id)} onChange={(next) => filter({ brand_id: fromList(next) })} />
             <MultiSelect label="Category" options={options.category} value={toList(state.category_id)} onChange={(next) => filter({ category_id: fromList(next) })} />
             <MultiSelect label="Source" options={options.source} value={toList(state.data_class)} onChange={(next) => filter({ data_class: fromList(next) })} />
+            {tagOptions.length ? <MultiSelect label="Tag" options={tagOptions} value={selectedTags} onChange={(next) => filter({ tag: fromList(next) })} searchable={false} /> : null}
             <Segmented label="Ownership" value={state.ownership ?? 'all'} onChange={(v) => filter({ ownership: v })} options={OWNERSHIP_OPTIONS} />
           </>
         ) : null}

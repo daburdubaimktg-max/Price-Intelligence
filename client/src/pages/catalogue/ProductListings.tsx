@@ -3,14 +3,17 @@ import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { Ellipsis, Eye, EyeOff, Pencil, Plus, Store, Trash2, CirclePlus } from 'lucide-react';
 import { apiDelete, apiPatch, apiPost } from '@/lib/api.ts';
 import { useCan } from '@/lib/auth.tsx';
-import { useReference } from '@/lib/hooks.ts';
+import { useApiQuery, useReference } from '@/lib/hooks.ts';
+import type { Paged } from '@/lib/api.ts';
 import { DataTable, type Column } from '@/components/ui/data-table.tsx';
 import { ConfirmDialog, Dialog, Menu } from '@/components/ui/overlays.tsx';
 import { Badge, Button, Card, CardHeader, cn, EmptyState, Field, IconButton, Input, Notice, Select, Switch } from '@/components/ui/primitives.tsx';
 import { AvailabilityBadge, ChangeCell, DataClassBadge, DemoBadge, FreshnessCell, PriceCell, PromoBadge } from '@/components/domain/domain.tsx';
 import { ListingDrawer, ManualObservationDialog } from '@/components/domain/observations.tsx';
+import { DealTagChips } from '@/components/domain/signals.tsx';
+import type { MonitorRow } from '@shared/api/analytics.ts';
 import type { ListingRow, ProductDetail, VariantRow } from '@shared/api/catalogue.ts';
-import { errorMessage, ExternalUrl, fitColumns, isHttpUrl, listingIsStale, pctChange, RowActions, useCatalogueActions, useElementWidth, type FitColumn } from './shared.tsx';
+import { CATALOGUE, errorMessage, ExternalUrl, fitColumns, isHttpUrl, listingIsStale, pctChange, RowActions, useCatalogueActions, useElementWidth, type FitColumn } from './shared.tsx';
 
 function ListingDialog({
   open,
@@ -157,6 +160,9 @@ export function ProductListings({ detail }: { detail: ProductDetail }) {
   const [remove, setRemove] = useState<ListingRow | null>(null);
   const [removeError, setRemoveError] = useState<string | null>(null);
   const { product, listings, variants } = detail;
+  // Deal tags and the seller belong to each listing's latest observation; the monitor rows of this product carry them.
+  const monitor = useApiQuery<Paged<MonitorRow>>([CATALOGUE, 'product-signals', product.id], '/monitor', { product_id: product.id, page_size: 200 }, { enabled: listings.length > 0 });
+  const signals = useMemo(() => new Map((monitor.data?.rows ?? []).map((row) => [row.listing_id, row])), [monitor.data]);
   // columns follow the width of the card (`minWidth`), so the price and the row menu are always on screen
   const [cardRef, cardWidth] = useElementWidth();
 
@@ -177,6 +183,11 @@ export function ProductListings({ detail }: { detail: ProductDetail }) {
             <span className="block truncate text-[11.5px] leading-4 text-ink-3">
               {l.market_name} · <span className="mono">{l.code}</span>
             </span>
+            {signals.get(l.id)?.seller_name ? (
+              <span className="block max-w-52 truncate text-[11.5px] leading-4 text-ink-3" title={`Seller on this listing: ${signals.get(l.id)!.seller_name}`}>
+                Sold by {signals.get(l.id)!.seller_name}
+              </span>
+            ) : null}
             {compact ? (
               <span className="mt-1 block">
                 <FreshnessCell iso={l.last_observed_at} stale={listingIsStale(l)} timeZone={l.timezone} />
@@ -216,6 +227,7 @@ export function ProductListings({ detail }: { detail: ProductDetail }) {
             <span className="inline-flex flex-col items-end gap-0.5">
               <PriceCell price={l.latest.current_price} regular={l.latest.regular_price} currency={l.currency_code} isPromo={l.latest.is_promo} />
               {l.latest.is_promo ? <PromoBadge type={l.latest.promo_type ?? 'other'} discount={l.latest.discount_pct} /> : null}
+              {signals.get(l.id)?.tags.length ? <DealTagChips tags={signals.get(l.id)!.tags} tagText={signals.get(l.id)!.tag_text} max={2} align="end" /> : null}
             </span>
           ) : (
             <span className="text-ink-4">No price yet</span>
@@ -283,7 +295,7 @@ export function ProductListings({ detail }: { detail: ProductDetail }) {
       });
     }
     return fitColumns(cols, cardWidth);
-  }, [canObserve, canWrite, cardWidth, run]);
+  }, [canObserve, canWrite, cardWidth, run, signals]);
 
   return (
     <div ref={cardRef} className="min-w-0">

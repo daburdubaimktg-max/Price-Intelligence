@@ -9,7 +9,7 @@ import { positioning, type Positioning } from './competitors.ts';
 import { dailySeries } from './history.ts';
 import { marketOverview, runStats, type MarketOverviewRow, type RunStats } from './markets.ts';
 import { eventCountsByDay, priceEvents, type PriceEventRow } from './monitor.ts';
-import { calendarFromDaily, listPromotions, type PromoCalendarDay, type PromotionRecord } from './promotions.ts';
+import { calendarFromDaily, listPromotions, promotionCounts, type PromoCalendarDay, type PromotionRecord } from './promotions.ts';
 import type { OverviewResult } from '../../../shared/api/analytics.ts';
 export type { OverviewResult };
 
@@ -124,8 +124,9 @@ export function overview(ctx: AppContext, options: { days?: number; market_ids?:
   const decreases = eventDays.reduce((acc, e) => acc + e.decreases, 0);
 
   // ---- promotions -------------------------------------------------------------------------------
-  const current = listPromotions(ctx, { market_ids: marketIds ?? undefined }, { status: 'current', sort: '-discount' }, { page: 1, pageSize: 500, offset: 0 });
-  const currentDiscounts = current.rows.map((p) => p.max_discount_pct).filter((v): v is number => v !== null);
+  // The ten deepest current promotions are listed; the figures next to them describe all current promotions.
+  const current = listPromotions(ctx, { market_ids: marketIds ?? undefined }, { status: 'current', sort: '-discount' }, { page: 1, pageSize: 10, offset: 0 });
+  const currentCounts = promotionCounts(ctx, { market_ids: marketIds ?? undefined }, { status: 'current' });
 
   // ---- collection -------------------------------------------------------------------------------
   const since = new Date(Date.now() - days * 86_400_000).toISOString();
@@ -161,8 +162,8 @@ export function overview(ctx: AppContext, options: { days?: number; market_ids?:
       latest_observation_at: coverage.latest_observation_at,
       price_increases: increases,
       price_decreases: decreases,
-      active_promotions: current.total,
-      active_promotion_products: new Set(current.rows.map((p) => p.product_id).filter(Boolean)).size,
+      active_promotions: currentCounts.total,
+      active_promotion_products: currentCounts.products,
       listings_stale: coverage.listings_stale ?? 0,
       listings_never_observed: coverage.listings_never_observed ?? 0,
       products_missing_or_stale: coverage.products_missing_or_stale,
@@ -177,11 +178,11 @@ export function overview(ctx: AppContext, options: { days?: number; market_ids?:
     positioning: positioning(ctx, { market_ids: marketIds ?? undefined }),
     recent_changes: priceEvents(ctx, { market_ids: marketIds ?? undefined, date_from: period.from, date_to: period.to }, { limit: 15 }).rows,
     promotions: {
-      current: current.rows.slice(0, 10),
+      current: current.rows,
       calendar: calendarFromDaily(daily, listings),
-      own_current: current.rows.filter((p) => p.ownership === 'own').length,
-      competitor_current: current.rows.filter((p) => p.ownership === 'competitor').length,
-      avg_current_discount_pct: currentDiscounts.length ? round(currentDiscounts.reduce((a, b) => a + b, 0) / currentDiscounts.length, 1) : null,
+      own_current: currentCounts.own,
+      competitor_current: currentCounts.competitor,
+      avg_current_discount_pct: currentCounts.avg_max_discount_pct,
     },
     markets,
   };

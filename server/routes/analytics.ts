@@ -100,6 +100,7 @@ export default async function analyticsRoutes(app: FastifyInstance) {
         direction,
         priceMin: filter.price_min,
         priceMax: filter.price_max,
+        tags: filter.tags,
         sort: typeof q.sort === 'string' ? q.sort : undefined,
       },
       page,

@@ -2,7 +2,7 @@
  * API types for observations, evidence, imports (CSV / Excel) and the Excel database workbook.
  * Types only — no runtime code.
  */
-import type { Availability, CollectionMethod, DataClass, Ownership, PromoType } from '../constants.ts';
+import type { Availability, CollectionMethod, DataClass, DealTag, Ownership, PromoType } from '../constants.ts';
 
 export interface Paged<T> {
   rows: T[];
@@ -78,6 +78,18 @@ export interface ObservationRecord {
   note: string | null;
   /** 1 = illustrative DEMO record, never a real market observation. */
   is_demo: 0 | 1;
+  /** Deal tags / badges the retailer showed with this price (keys of DEAL_TAGS, canonical order; empty = none). */
+  tags: DealTag[];
+  /** The retailer's own wording of the tag, e.g. "Early Yellow Friday Deal". */
+  tag_text: string | null;
+  /** Average customer rating (0–5) and the number of ratings / reviews, as shown at that moment. */
+  rating: number | null;
+  review_count: number | null;
+  /** Position in the retailer's sales ranking and the list it refers to, e.g. 3 and "#3 in Shampoos". */
+  sales_rank: number | null;
+  sales_rank_label: string | null;
+  /** Who sold the item on the listing (the retailer itself or a marketplace seller). */
+  seller_name: string | null;
   /** Price per 100 ml / 100 g / unit (see content_dimension); null when the pack content is unknown. */
   unit_price: number | null;
   /** 1 when the observation was voided (kept in the ledger, excluded from analytics). */
@@ -157,6 +169,16 @@ export interface ManualObservationInput {
   /** 0–1. Defaults to 0.95 for manual entry. */
   confidence?: number | null;
   note?: string | null;
+  /** Deal tags / badges seen with the price (keys of DEAL_TAGS). */
+  tags?: DealTag[] | null;
+  /** The retailer's own wording of the tag. */
+  tag_text?: string | null;
+  /** Average customer rating, 0–5. */
+  rating?: number | null;
+  review_count?: number | null;
+  sales_rank?: number | null;
+  sales_rank_label?: string | null;
+  seller_name?: string | null;
   /** Evidence uploaded beforehand through POST /api/evidence… */
   evidence_id?: number | null;
   /** …or described inline. */
@@ -282,6 +304,12 @@ export interface ObservationImportPreviewRow {
   promo_type: PromoType | null;
   availability: Availability;
   confidence: number | null;
+  tags: DealTag[];
+  tag_text: string | null;
+  rating: number | null;
+  review_count: number | null;
+  sales_rank: number | null;
+  seller_name: string | null;
 }
 
 export interface ProductImportPreviewRow {

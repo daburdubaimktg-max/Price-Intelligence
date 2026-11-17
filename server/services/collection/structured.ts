@@ -10,6 +10,7 @@
  */
 import type { AppContext } from '../../context.ts';
 import type { CollectionMethod } from '../../../shared/constants.ts';
+import { isPriceCutWording, normaliseDealTags } from '../../../shared/constants.ts';
 import type { ConnectorConfigField, ConnectorDescription, ConnectorExample } from '../../../shared/api/collection.ts';
 import { sha256Hex } from '../../lib/crypto.ts';
 import { NetError, readBody, safeFetch } from '../../lib/net.ts';
@@ -67,7 +68,18 @@ export interface StructuredConfig {
     gtin: string | null;
     source_timestamp: string | null;
     item_id: string | null;
+    rating: string | null;
+    review_count: string | null;
+    sales_rank: string | null;
+    sales_rank_label: string | null;
+    seller_name: string | null;
   };
+  /** Fields holding the tags / badges shown with the price: one text, a list of texts or a list of objects with a text. */
+  tags: string[];
+  /** Yes/no fields that mean a badge → the wording recorded when the flag is set, e.g. { is_bestseller: 'Best seller' }. */
+  flag_tags: Record<string, string>;
+  /** 'fetch': observations are dated when this system read the source. 'source': at the item's own timestamp. */
+  observed_time: 'fetch' | 'source';
   match: { listing_key: ListingKey; field: string | null };
   availability_map: AvailabilityMap | null;
   price_divisor: number;
@@ -80,7 +92,7 @@ export interface StructuredConfig {
 
 const FIELD_KEYS = [
   'current_price', 'regular_price', 'promo_price', 'discount_pct', 'promo_description', 'availability', 'currency', 'url',
-  'title', 'gtin', 'source_timestamp', 'item_id',
+  'title', 'gtin', 'source_timestamp', 'item_id', 'rating', 'review_count', 'sales_rank', 'sales_rank_label', 'seller_name',
 ] as const;
 
 const CONFIDENCE: Partial<Record<CollectionMethod, number>> = { official_api: 0.97, product_feed: 0.95, third_party: 0.9 };
@@ -167,6 +179,18 @@ export function readStructuredConfig(raw: Record<string, unknown>): { config: St
   if (pagination.type === 'next_url' && format === 'csv') problems.push('"next_url" pagination is not available for CSV feeds');
   if (pagination.type !== 'none' && mode === 'per_listing') warnings.push('Pagination is ignored in per-listing mode');
 
+  const tagsRaw = Array.isArray(raw.tags) ? raw.tags : typeof raw.tags === 'string' ? raw.tags.split(/[\n;]+/) : [];
+  const tagFields = [...new Set(tagsRaw.map((v) => str(v)).filter((v): v is string => v !== null))].slice(0, 20);
+  const flagTags: Record<string, string> = {};
+  for (const [key, value] of Object.entries(obj(raw.flag_tags))) {
+    const wording = str(value);
+    if (key.trim() && wording) flagTags[key.trim()] = wording.slice(0, 120);
+  }
+  const observedTime = raw.observed_time === 'source' ? 'source' : 'fetch';
+  if (observedTime === 'source' && !fields.source_timestamp) {
+    problems.push('Field mapping for the item timestamp (fields.source_timestamp) — needed when observations are dated by the source');
+  }
+
   const mapRaw = obj(raw.availability_map);
   let availabilityMap: AvailabilityMap | null = null;
   for (const key of ['in_stock', 'limited', 'out_of_stock'] as const) {
@@ -185,6 +209,9 @@ export function readStructuredConfig(raw: Record<string, unknown>): { config: St
     auth,
     headers,
     fields,
+    tags: tagFields,
+    flag_tags: flagTags,
+    observed_time: observedTime,
     match,
     availability_map: availabilityMap,
     price_divisor: Number.isFinite(divisor) && divisor > 0 ? divisor : 1,
@@ -325,6 +352,93 @@ interface ItemReading {
   problem?: { code: string; message: string };
 }
 
+/** Value at a mapped path. "sale_price || price" names alternatives: the first one that has a value is used. */
+export function readField(item: unknown, path: string | null | undefined): unknown {
+  if (!path) return undefined;
+  if (!path.includes('||')) return getPath(item, path);
+  for (const option of path.split('||')) {
+    const value = getPath(item, option.trim());
+    if (value !== undefined && value !== null && value !== '') return value;
+  }
+  return undefined;
+}
+
+const TAG_TEXT_LIMIT = 12;
+/** A "regular price" above this multiple of the selling price is treated as misread and is not stored. */
+export const IMPLAUSIBLE_REGULAR_FACTOR = 10;
+const FUTURE_TOLERANCE_MS = 10 * 60 * 1000;
+
+/** The wording of every tag / badge an item carries, in the order of the mapping. Emoji and private-use glyphs are dropped. */
+function readTagTexts(cfg: StructuredConfig, item: unknown): string[] {
+  const out: string[] = [];
+  const push = (value: unknown, depth = 0): void => {
+    if (value === null || value === undefined || typeof value === 'boolean' || depth > 3 || out.length >= TAG_TEXT_LIMIT) return;
+    if (Array.isArray(value)) {
+      for (const entry of value) push(entry, depth + 1);
+      return;
+    }
+    if (typeof value === 'object') {
+      const o = value as Record<string, unknown>;
+      for (const key of ['text', 'label', 'title', 'name', 'value', '#text']) {
+        if (o[key] !== undefined && o[key] !== null && typeof o[key] !== 'object') {
+          push(o[key], depth + 1);
+          return;
+        }
+      }
+      return;
+    }
+    const text = String(value)
+      .replace(/[\u{1F000}-\u{1FAFF}\u{2190}-\u{2BFF}\u{E000}-\u{F8FF}\u{FE0F}\u{200E}\u{200F}]/gu, '')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 200);
+    if (text && !out.includes(text)) out.push(text);
+  };
+  for (const path of cfg.tags) push(readField(item, path));
+  for (const [path, wording] of Object.entries(cfg.flag_tags)) {
+    const value = readField(item, path);
+    if (value === true || value === 1 || (typeof value === 'string' && /^(true|yes|y|1)$/i.test(value.trim()))) push(wording);
+  }
+  return out;
+}
+
+function readRating(value: unknown): number | null {
+  const text = asText(value);
+  const m = text === null ? null : /\d+(?:[.,]\d+)?/.exec(text);
+  if (!m) return null;
+  const n = Number(m[0].replace(',', '.'));
+  // 0 is how sources say "not rated yet"
+  return Number.isFinite(n) && n > 0 && n <= 5 ? Math.round(n * 100) / 100 : null;
+}
+
+function readCount(value: unknown): number | null {
+  if (typeof value === 'number') return Number.isFinite(value) && value >= 0 ? Math.round(value) : null;
+  const text = asText(value);
+  const m = text === null ? null : /^\(?\s*(\d[\d.,\s]*?)\s*([km])?\+?(?:\s|\)|$)/i.exec(text.trim());
+  if (!m) return null;
+  const digits = m[1]!.replace(/\s/g, '');
+  const n = m[2]
+    ? Number(digits.replace(',', '.')) * (m[2].toLowerCase() === 'k' ? 1_000 : 1_000_000)
+    : /^\d{1,3}(?:[.,]\d{3})+$/.test(digits)
+      ? Number(digits.replace(/\D/g, ''))
+      : /^\d+$/.test(digits)
+        ? Number(digits)
+        : Number.NaN;
+  return Number.isFinite(n) && n >= 0 && n < 1e12 ? Math.round(n) : null;
+}
+
+/** "3", "#3" or "#3 in Shampoos" → the position, and the full wording as the label when it says more than the number. */
+function readRank(value: unknown): { rank: number | null; label: string | null } {
+  if (typeof value === 'number') return { rank: Number.isInteger(value) && value > 0 ? value : null, label: null };
+  const text = asText(value);
+  const m = text === null ? null : /^(?:#|no\.?\s*|rank\s*#?)?\s*(\d{1,7})(?![\d.,])\s*(.*)$/i.exec(text.trim());
+  if (!m) return { rank: null, label: null };
+  const rank = Number(m[1]);
+  return { rank: rank > 0 ? rank : null, label: m[2]!.trim() ? text!.trim().slice(0, 200) : null };
+}
+
+const RANK_WORDING = /^#\s*\d{1,7}\s+in\s+\S/i;
+
 /** Turns one source item into an observation draft, or explains precisely why it cannot. */
 function readItem(
   cfg: StructuredConfig,
@@ -335,7 +449,7 @@ function readItem(
   currencies: ReadonlySet<string>,
 ): ItemReading {
   const priceOpts = { divisor: cfg.price_divisor, decimalSeparator: cfg.decimal_separator };
-  const field = (path: string | null) => (path ? getPath(item, path) : undefined);
+  const field = (path: string | null) => readField(item, path);
 
   // The currency comes from its own field when mapped, otherwise from a code written next to the price.
   const currency =
@@ -353,7 +467,15 @@ function readItem(
 
   const rawCurrent = field(cfg.fields.current_price);
   const current = parsePrice(rawCurrent, priceOpts);
-  const regular = parsePrice(field(cfg.fields.regular_price), priceOpts);
+  let regular = parsePrice(field(cfg.fields.regular_price), priceOpts);
+  // A list price below the selling price is not a "was" price (search results sometimes carry a per-unit figure there).
+  if (regular !== null && current !== null && regular < current * 0.999) regular = null;
+  // …and one that is more than ten times the selling price is a misread figure (a lost decimal point), not a discount of 90 %+.
+  let implausibleRegular: number | null = null;
+  if (regular !== null && current !== null && regular > current * IMPLAUSIBLE_REGULAR_FACTOR) {
+    implausibleRegular = regular;
+    regular = null;
+  }
   const promo = parsePrice(field(cfg.fields.promo_price), priceOpts);
   const availabilityMapped = !!cfg.fields.availability;
   const availability = availabilityMapped ? mapAvailability(field(cfg.fields.availability), cfg.availability_map) : 'unknown';
@@ -372,20 +494,56 @@ function readItem(
   }
 
   const url = asText(field(cfg.fields.url));
+
+  // A provider snapshot is dated when the provider saw the price, so reading the same snapshot again adds nothing.
+  const sourceTimestamp = parseSourceTimestamp(field(cfg.fields.source_timestamp));
+  const datedBySource =
+    cfg.observed_time === 'source' && sourceTimestamp !== null && Date.parse(sourceTimestamp) <= Date.parse(observedAt) + FUTURE_TOLERANCE_MS;
+
+  // Tags and signals shown with the price. "#3 in Shampoos" among the badges is a sales rank, not a tag.
+  let rank = readRank(field(cfg.fields.sales_rank));
+  const tagTexts: string[] = [];
+  for (const text of readTagTexts(cfg, item)) {
+    if (RANK_WORDING.test(text)) {
+      if (rank.rank === null || rank.label === null) rank = { rank: rank.rank ?? readRank(text).rank, label: text };
+      continue;
+    }
+    if (isPriceCutWording(text)) continue; // "Save 30%" is a lower price, which the prices themselves already say
+    tagTexts.push(text);
+  }
+  const rankLabel = asText(field(cfg.fields.sales_rank_label))?.slice(0, 200) ?? rank.label;
+
+  // An offer that needs several units ("Buy 3 for 27") is a multi-buy promotion unless the shelf price itself was cut.
+  const tags = normaliseDealTags(tagTexts);
+  const shelfPriceCut = (regular !== null && current !== null && current < regular * 0.995) || (promo !== null && (current === null || promo < current));
+  const promoType = tags.includes('multi_buy') && !shelfPriceCut ? ('multi_buy' as const) : undefined;
+
   const draft: ObservationDraft = {
-    observed_at: observedAt,
+    observed_at: datedBySource ? sourceTimestamp! : observedAt,
     observed_basis: 'exact',
     currency_code: retailer.currency_code,
     current_price: current,
     regular_price: regular,
     promo_price: promo,
     discount_pct: parsePercent(field(cfg.fields.discount_pct)),
+    promo_type: promoType,
     promo_description: asText(field(cfg.fields.promo_description)),
     availability,
     product_url: url && /^https?:\/\//i.test(url) ? url : fallbackUrl,
-    source_timestamp: parseSourceTimestamp(field(cfg.fields.source_timestamp)),
+    source_timestamp: sourceTimestamp,
     confidence: CONFIDENCE[retailer.collection_method] ?? 0.9,
     collection_status: current !== null && (!availabilityMapped || availability !== 'unknown') ? 'complete' : 'partial',
+    tags,
+    tag_text: tagTexts.length ? tagTexts.join(' · ').slice(0, 500) : null,
+    rating: readRating(field(cfg.fields.rating)),
+    review_count: readCount(field(cfg.fields.review_count)),
+    sales_rank: rank.rank,
+    sales_rank_label: rankLabel,
+    seller_name: asText(field(cfg.fields.seller_name))?.slice(0, 200) ?? null,
+    note:
+      implausibleRegular === null
+        ? undefined
+        : `The source's list price (${implausibleRegular}) is more than ${IMPLAUSIBLE_REGULAR_FACTOR} times the selling price and was not stored as the regular price.`,
   };
   return { draft };
 }
@@ -505,7 +663,7 @@ async function collectBulk(cc: CollectContext, cfg: StructuredConfig): Promise<C
   const discoveredKeys = new Set<string>();
 
   for (const { item, evidence, observedAt } of items) {
-    const itemKey = itemKeyOf(getPath(item, cfg.match.field), key);
+    const itemKey = itemKeyOf(readField(item, cfg.match.field), key);
     if (!itemKey) {
       itemsWithoutKey++;
       continue;
@@ -527,10 +685,10 @@ async function collectBulk(cc: CollectContext, cfg: StructuredConfig): Promise<C
     }
 
     // Not a configured listing.
-    const externalId = key === 'external_id' ? asText(getPath(item, cfg.match.field)) : asText(getPath(item, cfg.fields.item_id));
-    const urlValue = key === 'url' ? asText(getPath(item, cfg.match.field)) : asText(getPath(item, cfg.fields.url));
+    const externalId = key === 'external_id' ? asText(readField(item, cfg.match.field)) : asText(readField(item, cfg.fields.item_id));
+    const urlValue = key === 'url' ? asText(readField(item, cfg.match.field)) : asText(readField(item, cfg.fields.url));
     const url = urlValue && /^https?:\/\//i.test(urlValue) ? urlValue : null;
-    const gtinRaw = key === 'gtin' ? asText(getPath(item, cfg.match.field)) : asText(getPath(item, cfg.fields.gtin));
+    const gtinRaw = key === 'gtin' ? asText(readField(item, cfg.match.field)) : asText(readField(item, cfg.fields.gtin));
     const known =
       (externalId !== null && cc.known.externalIds.has(externalId.toLowerCase())) ||
       (url !== null && cc.known.urls.has(normaliseUrlKey(url)!)) ||
@@ -547,7 +705,7 @@ async function collectBulk(cc: CollectContext, cfg: StructuredConfig): Promise<C
     result.discovered.push({
       external_id: externalId ? externalId.slice(0, 200) : null,
       url,
-      title: asText(getPath(item, cfg.fields.title))?.slice(0, 300) ?? null,
+      title: asText(readField(item, cfg.fields.title))?.slice(0, 300) ?? null,
       gtin: gtinRaw ? gtinRaw.replace(/\D/g, '').slice(0, 20) || null : null,
       observation: reading.draft,
       evidence: reading.draft ? evidence : undefined,
@@ -720,7 +878,10 @@ const CONFIG_FIELDS: ConnectorConfigField[] = [
     show_if: { key: 'mode', in: ['bulk'] },
   },
   { key: 'match.field', label: 'Item field holding that identifier', type: 'text', group: 'Matching', required: true, placeholder: 'sku', show_if: { key: 'mode', in: ['bulk'] } },
-  { key: 'fields.current_price', label: 'Selling price field', type: 'text', group: 'Field mapping', required: true, placeholder: 'price.current' },
+  {
+    key: 'fields.current_price', label: 'Selling price field', type: 'text', group: 'Field mapping', required: true, placeholder: 'price.current',
+    help: 'Any field can name alternatives: "sale_price || price" uses the first one that has a value.',
+  },
   { key: 'fields.regular_price', label: 'Regular (list) price field', type: 'text', group: 'Field mapping', placeholder: 'price.was' },
   { key: 'fields.promo_price', label: 'Promotional price field', type: 'text', group: 'Field mapping' },
   { key: 'fields.discount_pct', label: 'Discount % field', type: 'text', group: 'Field mapping' },
@@ -731,7 +892,20 @@ const CONFIG_FIELDS: ConnectorConfigField[] = [
   { key: 'fields.title', label: 'Product title field', type: 'text', group: 'Field mapping', help: 'Used as the title of newly discovered listings.' },
   { key: 'fields.gtin', label: 'Barcode (GTIN) field', type: 'text', group: 'Field mapping' },
   { key: 'fields.item_id', label: 'Item id field', type: 'text', group: 'Field mapping' },
-  { key: 'fields.source_timestamp', label: 'Last-updated timestamp field', type: 'text', group: 'Field mapping', help: 'Stored as the source timestamp. The observation time is always when this system fetched the data.' },
+  { key: 'fields.source_timestamp', label: 'Item timestamp field', type: 'text', group: 'Field mapping', help: 'When the source itself saw or updated the price. Stored as the source timestamp; see "Observation time" for how observations are dated.' },
+  {
+    key: 'tags', label: 'Tag / badge fields', type: 'string_list', group: 'Tags and signals',
+    help: 'Fields holding the deal tags or badges shown with the price, e.g. deal_tag.text or nudges. A field may hold one text, a list of texts or a list of objects with a text. Wording such as "#3 in Shampoos" is read as the sales rank; a plain "Save 30%" is a price cut, not a tag.',
+  },
+  {
+    key: 'flag_tags', label: 'Yes/no fields that mean a badge', type: 'key_value', group: 'Tags and signals',
+    help: 'Field name → the wording to record when the flag is set, e.g. is_bestseller → Best seller.',
+  },
+  { key: 'fields.rating', label: 'Rating field', type: 'text', group: 'Tags and signals', placeholder: 'rating.value', help: 'Average customer rating, 0–5.' },
+  { key: 'fields.review_count', label: 'Number of reviews field', type: 'text', group: 'Tags and signals', placeholder: 'rating.count' },
+  { key: 'fields.sales_rank', label: 'Sales rank field', type: 'text', group: 'Tags and signals', help: 'A position (3) or wording such as "#3 in Shampoos".' },
+  { key: 'fields.sales_rank_label', label: 'Sales rank label field', type: 'text', group: 'Tags and signals' },
+  { key: 'fields.seller_name', label: 'Seller field', type: 'text', group: 'Tags and signals', help: 'Who sells the item on the listing: the retailer itself or a marketplace seller.' },
   { key: 'availability_map.in_stock', label: 'Values meaning "in stock"', type: 'string_list', group: 'Value interpretation' },
   { key: 'availability_map.limited', label: 'Values meaning "limited stock"', type: 'string_list', group: 'Value interpretation' },
   { key: 'availability_map.out_of_stock', label: 'Values meaning "out of stock"', type: 'string_list', group: 'Value interpretation' },
@@ -739,6 +913,14 @@ const CONFIG_FIELDS: ConnectorConfigField[] = [
   {
     key: 'decimal_separator', label: 'Decimal separator', type: 'select', group: 'Value interpretation', default: 'auto',
     options: [{ value: 'auto', label: 'Detect automatically' }, { value: '.', label: 'Point (12.50)' }, { value: ',', label: 'Comma (12,50)' }],
+  },
+  {
+    key: 'observed_time', label: 'Observation time', type: 'select', group: 'Value interpretation', default: 'fetch',
+    options: [
+      { value: 'fetch', label: 'When this system reads the source' },
+      { value: 'source', label: "The item's own timestamp (provider snapshots)" },
+    ],
+    help: "For snapshots delivered by a provider, use the item timestamp: each price is dated when the provider saw it, and reading the same snapshot twice adds nothing. Items without a usable timestamp are dated when they are read.",
   },
   {
     key: 'pagination.type', label: 'Pagination', type: 'select', group: 'Pagination', default: 'none',
@@ -826,6 +1008,32 @@ const EXAMPLES: Record<'official_api' | 'product_feed' | 'third_party', Connecto
       },
       notes: [
         'Field names differ per actor — check the actor\'s output and adjust the mapping.',
+        'You are responsible for using a provider and actor that collect data in a way the retailer permits.',
+      ],
+    },
+    {
+      title: 'Apify — last run of a scheduled task, with deal tags, ratings and seller',
+      description:
+        'For actors that output marketplace listings with badges. Create a task for the actor in your own Apify account (its input decides the country and brands), schedule it there, then store your Apify API token as the source credential and replace <TASK_ID>. Field names differ per actor: adjust the mapping to the output you see in Apify.',
+      config: {
+        mode: 'bulk',
+        format: 'json',
+        url: 'https://api.apify.com/v2/actor-tasks/<TASK_ID>/runs/last/dataset/items?status=SUCCEEDED&clean=true&format=json',
+        auth: { type: 'bearer' },
+        items_path: '',
+        match: { listing_key: 'external_id', field: 'sku' },
+        fields: {
+          current_price: 'sale_price || price', regular_price: 'price', availability: 'is_buyable', currency: 'currency', title: 'name', url: 'productUrl', item_id: 'sku',
+          source_timestamp: '_scrapedAt', rating: 'product_rating.value', review_count: 'product_rating.count', sales_rank: 'best_seller_rank', seller_name: 'store_name',
+        },
+        tags: ['deal_tag.text', 'nudges'],
+        flag_tags: { is_bestseller: 'Best seller' },
+        observed_time: 'source',
+        discover_listings: true,
+      },
+      notes: [
+        'Observations are dated by the provider\'s own timestamp, so a snapshot that has not changed adds nothing.',
+        'New items arrive as unmatched listings for review; nothing is matched automatically.',
         'You are responsible for using a provider and actor that collect data in a way the retailer permits.',
       ],
     },

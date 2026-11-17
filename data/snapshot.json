@@ -1,0 +1,18 @@
+{
+  "generated_at": "2026-11-17T18:25:07.366Z",
+  "db_bytes": 12500992,
+  "gz_bytes": 2385180,
+  "sha256": "b939e507f8094cde92915be38f3eb916a368f15501c82a91b66a80667e192787",
+  "counts": {
+    "observations": 6012,
+    "products": 3634,
+    "listings": 6011,
+    "retailers": 8,
+    "demo_observations": 0
+  },
+  "latest_observation_at": "2026-11-17T13:56:10.000Z",
+  "viewer": {
+    "id": 3,
+    "name": "Snapshot viewer"
+  }
+}

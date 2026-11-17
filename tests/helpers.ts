@@ -122,3 +122,53 @@ export function createFixture(ctx: AppContext, options: { retailerName?: string;
 export function ago(days: number, hours = 0): string {
   return new Date(Date.now() - days * 86_400_000 - hours * 3_600_000).toISOString();
 }
+
+export interface KnownPrices {
+  /** "Today" as analytics sees it (latest market-local date). */
+  today: string;
+  /** 08:00 UTC (midday in the Gulf) on the market-local date `k` days before today. Always in the past for k ≥ 1. */
+  at: (k: number) => string;
+  /** Local date `k` days before today. */
+  date: (k: number) => string;
+  /** Observation id of the promotional observation (own listing, T-2). */
+  promoObservationId: number;
+}
+
+/**
+ * A hand-computable price history for the fixture (currency AED), entered manually:
+ *   own   200 ml:  T-10 20.00 · T-8 20.00 · T-6 22.00 · T-4 22.00 · T-2 17.60 on promotion (regular 22.00) · T-1 22.00
+ *   rival 300 ml:  T-10 30.00 · T-6 27.00
+ * Unit prices today: own 11.00 / 100 ml, rival 9.00 / 100 ml → own is 22.2 % above (index 122.2).
+ */
+export async function ingestKnownPrices(ctx: AppContext, fx: Fixture): Promise<KnownPrices> {
+  const { ingestObservations } = await import('../server/services/ingestion.ts');
+  const { marketToday } = await import('../server/services/analytics/common.ts');
+  const { addDays } = await import('../server/lib/time.ts');
+  const today = marketToday(ctx);
+  const date = (k: number) => addDays(today, -k);
+  const at = (k: number) => `${date(k)}T08:00:00.000Z`;
+  const price = (listing_id: number, k: number, current: number, extra: Record<string, unknown> = {}) => ({
+    listing_id,
+    observed_at: at(k),
+    current_price: current,
+    regular_price: current,
+    availability: 'in_stock' as const,
+    ...extra,
+  });
+  const res = ingestObservations(
+    ctx,
+    [
+      price(fx.ownListingId, 10, 20),
+      price(fx.ownListingId, 8, 20),
+      price(fx.ownListingId, 6, 22),
+      price(fx.ownListingId, 4, 22),
+      price(fx.ownListingId, 2, 17.6, { regular_price: 22, promo_price: 17.6, is_promo: true, promo_type: 'price_cut', promo_description: 'Save 20%' }),
+      price(fx.ownListingId, 1, 22),
+      price(fx.compListingId, 10, 30),
+      price(fx.compListingId, 6, 27),
+    ],
+    { sourceMethod: 'manual', userId: 1 },
+  );
+  if (res.inserted !== 8) throw new Error(`fixture prices were not stored: ${JSON.stringify(res.rejected)}`);
+  return { today, at, date, promoObservationId: res.idByIndex.get(4)! };
+}

@@ -282,6 +282,8 @@ export interface PriceEventRow {
   product_name: string | null;
   brand_name: string | null;
   ownership: 'own' | 'competitor' | null;
+  /** Set when the listing sells a pack variant (e.g. a twin pack) rather than the base product. */
+  variant_name: string | null;
   pack_size: number | null;
   pack_unit: string | null;
   units_per_pack: number;
@@ -504,6 +506,8 @@ export interface PromotionRecord {
   ownership: 'own' | 'competitor' | null;
   category_name: string | null;
   subcategory_name: string | null;
+  /** Set when the listing sells a pack variant (e.g. a twin pack) rather than the base product. */
+  variant_name: string | null;
   pack_size: number | null;
   pack_unit: string | null;
   units_per_pack: number;
@@ -721,4 +725,11 @@ export interface OverviewResult {
   recent_changes: PriceEventRow[];
   promotions: { current: PromotionRecord[]; calendar: PromoCalendarDay[]; own_current: number; competitor_current: number; avg_current_discount_pct: number | null };
   markets: MarketOverviewRow[];
+}
+
+/** Average own ÷ competitor price index on one day, from pairs observed (or last known within 7 days). */
+export interface PositioningPoint {
+  date: string;
+  index: number;
+  pairs: number;
 }

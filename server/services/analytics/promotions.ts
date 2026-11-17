@@ -15,6 +15,7 @@ import { listingConditions, OBS_FROM, obsWhere, type ObsFilter } from '../obs-fi
 import { ageHoursSql, demoNote, loadListings, mean, round, STALE_HOURS_SQL, type DateRange, type DemoNote, type ListingInfo } from './common.ts';
 import { dailySeries, type DailyRow } from './history.ts';
 import type { PromotionRecord, PromoBreakdown, PromotionSummary, PromoTimelineRow, PromoCalendarDay } from '../../../shared/api/analytics.ts';
+import { PROMO_TYPE_LABELS, type PromoType } from '../../../shared/constants.ts';
 export type { PromotionRecord, PromoBreakdown, PromotionSummary, PromoTimelineRow, PromoCalendarDay };
 
 export interface PromotionOptions {
@@ -31,7 +32,7 @@ const PROMO_SELECT = `
   pr.promo_days_observed, pr.observation_count, pr.currency_code, pr.regular_price, pr.min_promo_price, pr.max_discount_pct,
   pr.avg_discount_pct, pr.stated_start, pr.stated_end, pr.is_demo,
   li.product_id, li.product_name, li.brand_id, li.brand_name, li.ownership, li.category_name, li.subcategory_name,
-  li.pack_size, li.pack_unit, li.units_per_pack, li.retailer_id, li.retailer_name, li.market_id, li.market_code, li.market_name, li.timezone`;
+  li.variant_name, li.pack_size, li.pack_unit, li.units_per_pack, li.retailer_id, li.retailer_name, li.market_id, li.market_code, li.market_name, li.timezone`;
 const PROMO_FROM = `FROM promotions pr JOIN v_listing_info li ON li.listing_id = pr.listing_id`;
 
 const PROMO_SORTS: Record<string, string> = {
@@ -201,7 +202,7 @@ export function promotionSummary(ctx: AppContext, filter: ObsFilter, period: Dat
       frequency_per_listing_30d: observedListings.size && periodDays > 0 ? round((startedInPeriod / observedListings.size) * (30 / periodDays), 2) : null,
       avg_days_between: round(mean(gaps), 1),
     },
-    by_type: breakdown((e) => [e.promo_type, e.promo_type]),
+    by_type: breakdown((e) => [e.promo_type, PROMO_TYPE_LABELS[e.promo_type as PromoType] ?? e.promo_type]),
     by_ownership: breakdown((e) => [e.ownership ?? 'none', e.ownership === 'own' ? 'Own brands' : e.ownership === 'competitor' ? 'Competitors' : 'Unmatched', e.ownership], byOwnershipDays),
     by_brand: breakdown((e) => [`B${e.brand_id ?? 0}`, e.brand_name ?? 'Unmatched', e.ownership], byBrandDays),
     by_retailer: breakdown((e) => [`R${e.retailer_id}`, `${e.retailer_name} (${e.market_code})`], byRetailerDays),

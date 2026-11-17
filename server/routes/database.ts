@@ -32,8 +32,15 @@ export default async function databaseRoutes(app: FastifyInstance) {
     maybeAutoRefreshMirror(ctx, now);
   });
 
+  // Producing the full workbook is heavy; a couple at a time is plenty.
+  let exporting = 0;
+
   app.get('/database/export.xlsx', { config: { permission: 'database.export' } }, async (req, reply) => {
     const user = req.user!;
+    if (exporting >= 2) {
+      throw new AppError(429, 'busy', 'The database workbook is already being generated for other requests. Try again in a minute, or download the Excel mirror.');
+    }
+    exporting++;
     const dir = path.join(exportsDir(ctx), 'tmp');
     fs.mkdirSync(dir, { recursive: true });
     const file = path.join(dir, `export-${crypto.randomBytes(8).toString('hex')}.xlsx`);
@@ -55,6 +62,8 @@ export default async function databaseRoutes(app: FastifyInstance) {
     } catch (err) {
       fs.rmSync(file, { force: true });
       throw err;
+    } finally {
+      exporting--;
     }
     const stream = fs.createReadStream(file);
     stream.on('close', () => fs.rm(file, { force: true }, () => undefined));

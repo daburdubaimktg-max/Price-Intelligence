@@ -36,17 +36,29 @@ function TriggerButton({ label, value, active, onClear, className, icon }: { lab
         <ChevronDown className="size-3.5 shrink-0 text-ink-3" aria-hidden />
       </span>
       {active && onClear ? (
-        <button
-          type="button"
+        // A span, not a <button>: this control sits inside the popover's trigger button, and a button
+        // may not contain another button.
+        <span
+          role="button"
+          tabIndex={0}
           aria-label={`Clear ${label}`}
-          className="-ml-px inline-flex h-[34px] w-7 items-center justify-center rounded-r-lg border border-l-0 border-navy/70 bg-surface text-ink-3 hover:text-ink"
+          className="-ml-px inline-flex h-[34px] w-7 cursor-pointer items-center justify-center rounded-r-lg border border-l-0 border-navy/70 bg-surface text-ink-3 hover:text-ink"
+          onPointerDown={(e) => e.stopPropagation()}
           onClick={(e) => {
             e.stopPropagation();
+            e.preventDefault();
             onClear();
+          }}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.stopPropagation();
+              e.preventDefault();
+              onClear();
+            }
           }}
         >
           <X className="size-3" aria-hidden />
-        </button>
+        </span>
       ) : null}
     </span>
   );
@@ -371,24 +383,40 @@ export function DateRangePicker({
 /** Search box that reports its value after typing pauses. */
 export function SearchInput({ value, onChange, placeholder = 'Search…', className, delay = 300 }: { value: string; onChange: (next: string) => void; placeholder?: string; className?: string; delay?: number }) {
   const [text, setText] = useState(value);
-  const last = useRef(value);
+  // Text typed by the user that has not been reported yet. Only this is ever emitted, so a stale debounced
+  // value can never overwrite a change that came from outside (Reset, browser back).
+  const pending = useRef<string | null>(null);
+  const seen = useRef(value);
   useEffect(() => {
-    if (value !== last.current) {
-      last.current = value;
+    if (value !== seen.current) {
+      seen.current = value;
+      pending.current = null;
       setText(value);
     }
   }, [value]);
   const debounced = useDebounced(text, delay);
   useEffect(() => {
-    if (debounced !== last.current) {
-      last.current = debounced;
+    if (pending.current === null || debounced !== pending.current) return;
+    pending.current = null;
+    if (debounced !== seen.current) {
+      seen.current = debounced;
       onChange(debounced);
     }
   }, [debounced, onChange]);
   return (
     <span className={cn('relative inline-flex w-56 max-w-full', className)}>
       <Search className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-ink-3" aria-hidden />
-      <Input type="search" value={text} placeholder={placeholder} onChange={(e) => setText(e.target.value)} className="pl-8" aria-label={placeholder} />
+      <Input
+        type="search"
+        value={text}
+        placeholder={placeholder}
+        onChange={(e) => {
+          pending.current = e.target.value;
+          setText(e.target.value);
+        }}
+        className="pl-8"
+        aria-label={placeholder}
+      />
     </span>
   );
 }

@@ -163,6 +163,30 @@ function cellText(value: unknown, numFmt?: string): string {
   return String(value).trim();
 }
 
+/** Workbooks that would expand beyond this are refused instead of being loaded into memory. */
+export const XLSX_MAX_UNCOMPRESSED_BYTES = 400 * 1024 * 1024;
+
+/**
+ * Total uncompressed size declared in a ZIP archive's central directory, or null when the buffer is not a
+ * readable ZIP. Used to refuse oversized (or zip-bomb) workbooks before they are expanded.
+ */
+export function zipUncompressedSize(buffer: Buffer): number | null {
+  const lowest = Math.max(0, buffer.length - 65_557);
+  for (let i = buffer.length - 22; i >= lowest; i--) {
+    if (buffer.readUInt32LE(i) !== 0x06054b50) continue;
+    const entries = buffer.readUInt16LE(i + 10);
+    let offset = buffer.readUInt32LE(i + 16);
+    let total = 0;
+    for (let n = 0; n < entries; n++) {
+      if (offset + 46 > buffer.length || buffer.readUInt32LE(offset) !== 0x02014b50) return null;
+      total += buffer.readUInt32LE(offset + 24);
+      offset += 46 + buffer.readUInt16LE(offset + 28) + buffer.readUInt16LE(offset + 30) + buffer.readUInt16LE(offset + 32);
+    }
+    return total;
+  }
+  return null;
+}
+
 /**
  * Reads one worksheet of an .xlsx workbook (the named sheet, otherwise the first sheet that has data).
  * The first non-empty row is the header row. Dates become ISO-style text (`2026-11-17` or
@@ -170,6 +194,12 @@ function cellText(value: unknown, numFmt?: string): string {
  * formulas yield their cached results and rich text is flattened.
  */
 export async function parseXlsx(buffer: Buffer, sheetName?: string | null): Promise<XlsxData> {
+  const expanded = zipUncompressedSize(buffer);
+  if (expanded !== null && expanded > XLSX_MAX_UNCOMPRESSED_BYTES) {
+    throw new Error(
+      `The workbook is too large to import (${Math.round(expanded / 1024 / 1024)} MB of data). Split it into smaller files or save the sheet as CSV.`,
+    );
+  }
   const workbook = new ExcelJS.Workbook();
   try {
     await workbook.xlsx.load(buffer as never);

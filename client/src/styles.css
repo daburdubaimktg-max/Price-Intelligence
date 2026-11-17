@@ -178,6 +178,9 @@
     text-decoration-color: currentColor;
   }
   .table-wrap {
+    /* containing block: keeps visually-hidden (absolutely positioned) cell content inside the scroll area,
+       otherwise it widens the page when a table scrolls horizontally */
+    position: relative;
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
   }

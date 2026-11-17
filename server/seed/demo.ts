@@ -479,6 +479,14 @@ export async function seedDemo(ctx: AppContext): Promise<Record<string, number>>
     }
   });
 
+  // Stale-listing and failing-source alerts are derived from the seeded state now rather than at the first scheduler tick.
+  try {
+    const { runStateChecks } = await import('../services/alerts.ts');
+    runStateChecks(ctx);
+  } catch (err) {
+    ctx.log.warn({ err }, 'could not evaluate state alerts after seeding demo data');
+  }
+
   counts.alerts = db.scalar<number>('SELECT COUNT(*) FROM alerts WHERE is_demo = 1') ?? 0;
   counts.promotions = db.scalar<number>('SELECT COUNT(*) FROM promotions WHERE is_demo = 1') ?? 0;
   counts.price_events = db.scalar<number>('SELECT COUNT(*) FROM price_events WHERE is_demo = 1') ?? 0;

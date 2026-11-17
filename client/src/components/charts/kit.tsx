@@ -116,6 +116,8 @@ export function dateTicks(minDay: number, maxDay: number, width: number): number
   const step = candidates.find((c) => span / c <= maxTicks) ?? 365;
   const ticks: number[] = [];
   for (let d = maxDay; d >= minDay; d -= step) ticks.unshift(d);
+  // On narrow charts the step can exceed the span, leaving only the end date: always show the start too.
+  if (ticks.length < 2 && maxDay > minDay) ticks.unshift(minDay);
   return ticks;
 }
 

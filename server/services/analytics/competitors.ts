@@ -19,8 +19,8 @@ import {
 } from './common.ts';
 import { dailySeries } from './history.ts';
 import { monitorRowsFor, type MonitorRow } from './monitor.ts';
-import type { GapBasis, PairRow, PositionGroup, Positioning, OwnProductPosition, CompareListingRow, CompetitorSummary, CompetitorCompareResult as CompareResult } from '../../../shared/api/analytics.ts';
-export type { GapBasis, PairRow, PositionGroup, Positioning, OwnProductPosition, CompareListingRow, CompetitorSummary, CompareResult };
+import type { GapBasis, PairRow, PositionGroup, Positioning, OwnProductPosition, CompareListingRow, CompetitorSummary, PositioningPoint, CompetitorCompareResult as CompareResult } from '../../../shared/api/analytics.ts';
+export type { GapBasis, PairRow, PositionGroup, Positioning, OwnProductPosition, CompareListingRow, CompetitorSummary, CompareResult, PositioningPoint };
 
 export interface PairFilter {
   market_ids?: number[];
@@ -323,6 +323,96 @@ export function ownProductPositions(ctx: AppContext, filter: PairFilter = {}): O
       position,
     };
   });
+}
+
+/**
+ * How the own-vs-competitor price index moved over time. For every approved pair listed at the same
+ * retailer, each day uses both sides' last known price (carried forward at most 7 days); the day's index is
+ * the average over pairs. Pairs measured in different units are left out.
+ */
+export function positioningHistory(ctx: AppContext, filter: PairFilter, period: DateRange): PositioningPoint[] {
+  const conditions: string[] = [
+    filter.includeSuggested ? `cm.status IN ('approved', 'suggested')` : `cm.status = 'approved'`,
+    '(cm.market_id IS NULL OR cm.market_id = own.market_id)',
+    'own.listing_active = 1 AND comp.listing_active = 1 AND own.retailer_active = 1',
+  ];
+  const params: SqlValue[] = [];
+  const inList = (column: string, values?: number[]) => {
+    if (!values?.length) return;
+    conditions.push(`${column} IN (${placeholders(values.length)})`);
+    params.push(...values);
+  };
+  inList('own.market_id', filter.market_ids);
+  inList('own.retailer_id', filter.retailer_ids);
+  inList('own.brand_id', filter.own_brand_ids);
+  inList('cm.own_product_id', filter.own_product_ids);
+  if (filter.category_ids?.length) {
+    const ph = placeholders(filter.category_ids.length);
+    conditions.push(`(own.category_id IN (${ph}) OR own.subcategory_id IN (${ph}))`);
+    params.push(...filter.category_ids, ...filter.category_ids);
+  }
+  const pairs = ctx.db.all<{
+    own_listing_id: number; comp_listing_id: number; equivalence: 'equivalent' | 'comparable';
+    own_content: number | null; comp_content: number | null; own_dimension: string | null; comp_dimension: string | null;
+    own_unit_factor: number | null; comp_unit_factor: number | null;
+  }>(
+    `SELECT own.listing_id AS own_listing_id, comp.listing_id AS comp_listing_id, cm.equivalence,
+       own.content_amount AS own_content, comp.content_amount AS comp_content,
+       own.content_dimension AS own_dimension, comp.content_dimension AS comp_dimension,
+       own.unit_factor AS own_unit_factor, comp.unit_factor AS comp_unit_factor
+     FROM competitor_mappings cm
+     JOIN v_listing_info own ON own.product_id = cm.own_product_id
+     JOIN v_listing_info comp ON comp.product_id = cm.competitor_product_id AND comp.retailer_id = own.retailer_id
+     WHERE ${conditions.join(' AND ')}`,
+    params,
+  );
+  const usable = pairs.filter(
+    (p) => comparisonBasis(p.equivalence, { content: p.own_content, dimension: p.own_dimension }, { content: p.comp_content, dimension: p.comp_dimension }) !== 'not_comparable',
+  );
+  if (!usable.length) return [];
+  const listingIds = [...new Set(usable.flatMap((p) => [p.own_listing_id, p.comp_listing_id]))];
+  const CARRY_DAYS = 7;
+  const from = new Date(Date.parse(`${period.from}T00:00:00Z`) - CARRY_DAYS * 86_400_000).toISOString().slice(0, 10);
+  const byListing = new Map<number, Array<{ day: number; price: number }>>();
+  for (let i = 0; i < listingIds.length; i += 400) {
+    const chunk = listingIds.slice(i, i + 400);
+    for (const row of dailySeries(ctx, { listing_ids: chunk, date_from: from, date_to: period.to, include_unmatched: true })) {
+      if (row.current_price === null) continue;
+      const day = Math.round(Date.parse(`${row.date}T00:00:00Z`) / 86_400_000);
+      const list = byListing.get(row.listing_id);
+      if (list) list.push({ day, price: row.current_price });
+      else byListing.set(row.listing_id, [{ day, price: row.current_price }]);
+    }
+  }
+  const startDay = Math.round(Date.parse(`${period.from}T00:00:00Z`) / 86_400_000);
+  const endDay = Math.round(Date.parse(`${period.to}T00:00:00Z`) / 86_400_000);
+  const cursors = new Map<number, number>();
+  const priceOn = (listingId: number, day: number): number | null => {
+    const series = byListing.get(listingId);
+    if (!series) return null;
+    let i = cursors.get(listingId) ?? 0;
+    while (i + 1 < series.length && series[i + 1]!.day <= day) i++;
+    cursors.set(listingId, i);
+    const point = series[i]!;
+    return point.day <= day && day - point.day <= CARRY_DAYS ? point.price : null;
+  };
+  const out: PositioningPoint[] = [];
+  for (let day = startDay; day <= endDay; day++) {
+    let sum = 0;
+    let n = 0;
+    for (const p of usable) {
+      const own = priceOn(p.own_listing_id, day);
+      const comp = priceOn(p.comp_listing_id, day);
+      if (own === null || comp === null) continue;
+      const ownUnit = unitPriceOf(own, { content_amount: p.own_content, unit_factor: p.own_unit_factor });
+      const compUnit = unitPriceOf(comp, { content_amount: p.comp_content, unit_factor: p.comp_unit_factor });
+      if (ownUnit === null || compUnit === null || !(compUnit > 0)) continue;
+      sum += (ownUnit / compUnit) * 100;
+      n++;
+    }
+    if (n > 0) out.push({ date: new Date(day * 86_400_000).toISOString().slice(0, 10), index: round(sum / n, 2)!, pairs: n });
+  }
+  return out;
 }
 
 /** Full comparison of one own product against its mapped competitor products. */

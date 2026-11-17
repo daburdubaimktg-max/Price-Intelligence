@@ -39,7 +39,11 @@ import type {
   ObservationRecord,
 } from '../../shared/api/observations.ts';
 
-const EXPORT_MAX_ROWS = 250_000;
+/** Largest filtered export served in one file (override with PIOS_EXPORT_MAX_ROWS). */
+const exportMaxRows = () => {
+  const configured = Number(process.env.PIOS_EXPORT_MAX_ROWS);
+  return Number.isInteger(configured) && configured > 0 ? configured : 250_000;
+};
 const EVIDENCE_MAX_BYTES = 15 * 1024 * 1024;
 const VOID_JOIN = 'LEFT JOIN observation_voids ov ON ov.observation_id = o.id';
 const VOID_COLUMNS = '(ov.observation_id IS NOT NULL) AS voided, ov.reason AS void_reason';
@@ -328,11 +332,12 @@ export default async function observationRoutes(app: FastifyInstance) {
       scope.where.params,
     );
     const total = breakdown.reduce((sum, b) => sum + b.n, 0);
-    if (total > EXPORT_MAX_ROWS) {
+    const limit = exportMaxRows();
+    if (total > limit) {
       throw new AppError(
         413,
         'too_large',
-        `This export would contain ${total.toLocaleString('en-US')} rows; the limit is ${EXPORT_MAX_ROWS.toLocaleString('en-US')}. Narrow the date range or filters, or download the full Excel database instead.`,
+        `This export would contain ${total.toLocaleString('en-US')} rows; the limit is ${limit.toLocaleString('en-US')}. Narrow the date range or filters, or download the full Excel database instead.`,
       );
     }
     const user = req.user!;

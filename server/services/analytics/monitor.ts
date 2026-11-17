@@ -161,7 +161,7 @@ export interface EventOptions {
 const EVENT_SELECT = `
   e.id, e.kind, e.direction, e.old_price, e.new_price, e.change_abs, e.change_pct, e.old_availability, e.new_availability,
   e.occurred_at, e.occurred_local_date, e.observation_id, e.prev_observation_id, e.listing_id,
-  li.product_id, li.product_name, li.brand_name, li.ownership, li.pack_size, li.pack_unit, li.units_per_pack,
+  li.product_id, li.product_name, li.brand_name, li.ownership, li.variant_name, li.pack_size, li.pack_unit, li.units_per_pack,
   li.retailer_id, li.retailer_name, li.market_id, li.market_code, li.market_name, li.timezone, li.currency_code,
   o.data_class, o.source_method, o.is_promo, o.promo_type, o.promo_description, o.discount_pct, e.is_demo`;
 

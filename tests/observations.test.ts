@@ -6,7 +6,7 @@ import { ago, createFixture, createTestApp, type Fixture, type TestApp } from '.
 import { ingestObservations } from '../server/services/ingestion.ts';
 import { setSecret } from '../server/services/core.ts';
 import { localDate, nowIso } from '../server/lib/time.ts';
-import { parseCsv, parseXlsx, toCsv } from '../server/lib/tabular.ts';
+import { parseCsv, parseXlsx, toCsv, zipUncompressedSize } from '../server/lib/tabular.ts';
 import { buildXlsx, sanitiseSheetName, writeXlsx } from '../server/services/export.ts';
 import { databaseSheetNames, maybeAutoRefreshMirror, mirrorPath } from '../server/services/database-export.ts';
 import type { RoleKey } from '../shared/constants.ts';
@@ -389,6 +389,16 @@ describe('exports', () => {
     assert.ok(rows.every((r) => r['On promotion'] === 'Yes' && r.Brand === 'Test Own'));
     assert.deepEqual(rows.map((r) => Number(r['Observation ID'])), listed.rows.map((r: any) => r.id));
     assert.equal((await download('/observations/export?format=pdf')).status, 400);
+    // oversized exports are refused with advice instead of being produced
+    process.env.PIOS_EXPORT_MAX_ROWS = '5';
+    try {
+      const tooBig = await t.api('GET', '/observations/export?format=xlsx');
+      assert.equal(tooBig.status, 413);
+      assert.match(tooBig.body.error.message, /limit is 5\. Narrow the date range/);
+      assert.equal((await download(`/observations/export?format=csv&${query}&price_max=1`)).status, 200);
+    } finally {
+      delete process.env.PIOS_EXPORT_MAX_ROWS;
+    }
     assert.equal((await t.api('GET', '/observations/export', { as: null })).status, 401);
   });
 
@@ -431,6 +441,9 @@ describe('workbook writer and CSV helpers', () => {
     assert.deepEqual(wb.worksheets.map((w) => w.rowCount), [11, 11, 6]);
     assert.equal(wb.worksheets[2]!.getRow(2).getCell(1).value, 21);
     assert.equal(sanitiseSheetName('x'.repeat(50)).length, 31);
+    // the declared expanded size is what the importer checks before loading a workbook
+    assert.ok(zipUncompressedSize(buffer)! > buffer.length);
+    assert.equal(zipUncompressedSize(Buffer.from('not a zip archive at all, just text')), null);
     assert.equal(sanitiseSheetName('History'), 'History data');
   });
 

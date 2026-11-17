@@ -86,7 +86,13 @@ export function TimeSeriesChart({
   );
   const visible = prepared.filter((s) => !hiddenKeys?.has(s.key) && s.pts.length > 0);
 
-  const margin = { top: 10, right: 16, bottom: 26, left: 52 };
+  // With few series the last value is printed beside each line end, so room is reserved on the right
+  // for the widest of those labels (otherwise they would sit on top of the lines).
+  const endLabelRoom =
+    visible.length > 0 && visible.length <= 4
+      ? Math.min(96, Math.max(...visible.map((s) => formatValue(s.pts[s.pts.length - 1]!.value).length)) * 6.6 + 16)
+      : 0;
+  const margin = { top: 10, right: Math.max(16, endLabelRoom), bottom: 26, left: 52 };
   const width = Math.max(0, size.width);
   const plotW = Math.max(0, width - margin.left - margin.right);
   const plotH = Math.max(0, height - margin.top - margin.bottom);
@@ -204,7 +210,8 @@ export function TimeSeriesChart({
           ))}
           <line x1={margin.left} x2={margin.left + plotW} y1={margin.top + plotH} y2={margin.top + plotH} stroke={AXIS} strokeWidth={1} />
           {xTicks.map((d) => (
-            <text key={d} x={scales.x(d)} y={height - 8} textAnchor="middle" fontSize={11} fill={AXIS_TEXT} className="num">
+            // a tick at the right edge is end-anchored so its label is not clipped by the frame
+            <text key={d} x={scales.x(d) > width - 22 ? width - 1 : scales.x(d)} y={height - 8} textAnchor={scales.x(d) > width - 22 ? 'end' : 'middle'} fontSize={11} fill={AXIS_TEXT} className="num">
               {shortDate(dayToIso(d))}
             </text>
           ))}
@@ -224,7 +231,7 @@ export function TimeSeriesChart({
             <circle key={`end-${p.key}`} cx={scales.x(p.last.day)} cy={scales.y(p.last.value)} r={4} fill={p.color} stroke="#fff" strokeWidth={2} />
           ))}
           {endLabels.map((l) => (
-            <text key={`lbl-${l.key}`} x={Math.min(l.x + 8, width - 2)} y={l.y} dy="0.32em" fontSize={11} fontWeight={600} fill="#0e1b36" textAnchor={l.x + 60 > width ? 'end' : 'start'} dx={l.x + 60 > width ? -14 : 0} className="num">
+            <text key={`lbl-${l.key}`} x={l.x + 9} y={l.y} dy="0.32em" fontSize={11} fontWeight={600} fill="#0e1b36" textAnchor="start" className="num">
               {l.text}
             </text>
           ))}

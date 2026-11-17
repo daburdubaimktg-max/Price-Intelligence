@@ -271,6 +271,8 @@ const PRESET_LABELS: Record<DatePreset, string> = {
 };
 
 export function presetRange(preset: DatePreset, today: string): Partial<DateRange> {
+  // "today" comes from the server; until it has loaded no preset can be resolved.
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(today ?? '')) return {};
   switch (preset) {
     case 'today':
       return { from: today, to: today };
@@ -291,6 +293,7 @@ export function presetRange(preset: DatePreset, today: string): Partial<DateRang
 
 /** Finds the preset that produces exactly this range, if any. */
 export function matchPreset(range: Partial<DateRange>, today: string, presets: DatePreset[]): DatePreset | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(today ?? '')) return null;
   for (const p of presets) {
     const r = presetRange(p, today);
     if ((r.from ?? '') === (range.from ?? '') && (r.to ?? '') === (range.to ?? '')) return p;

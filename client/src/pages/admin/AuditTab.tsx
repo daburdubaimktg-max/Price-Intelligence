@@ -53,10 +53,15 @@ export function AuditTab() {
   const patch = (changes: Partial<AuditUrl>) => set({ ...changes, a_page: undefined });
 
   const columns: Array<Column<AuditLogRow>> = [
-    { key: 'at', header: 'Time (your time zone)', nowrap: true, cell: (row) => <span className="num text-ink-2">{fmtDateTime(row.at)}</span> },
+    {
+      key: 'at',
+      header: 'Time (your time zone)',
+      cell: (row) => <span className="num text-ink-2 sm:whitespace-nowrap">{fmtDateTime(row.at)}</span>,
+    },
     {
       key: 'user',
       header: 'User',
+      hideBelow: 'sm',
       cell: (row) => (
         <div className="min-w-[8rem]">
           <div className="text-ink">{row.user_name ?? row.user_email ?? 'System'}</div>
@@ -64,7 +69,16 @@ export function AuditTab() {
         </div>
       ),
     },
-    { key: 'action', header: 'Action', cell: (row) => <span className="mono whitespace-nowrap text-ink">{row.action}</span> },
+    {
+      key: 'action',
+      header: 'Action',
+      cell: (row) => (
+        <div>
+          <span className="mono break-all text-ink sm:break-normal sm:whitespace-nowrap">{row.action}</span>
+          <div className="text-[11.5px] text-ink-3 sm:hidden">{row.user_name ?? row.user_email ?? 'System'}</div>
+        </div>
+      ),
+    },
     {
       key: 'entity',
       header: 'Record',

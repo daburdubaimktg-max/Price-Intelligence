@@ -118,7 +118,7 @@ function integrations(ctx: AppContext): IntegrationsStatus {
         s.ai.provider === 'builtin'
           ? 'The assistant uses the built-in query engine: it answers a fixed range of pricing questions directly from stored records and needs no external service. To understand free-form questions, select Anthropic Claude and provide an API key (created at console.anthropic.com).'
           : aiReady
-            ? `The assistant sends questions to Anthropic Claude (${s.ai.model}), which queries the stored records through tools. The API key is ${aiKey.configured ? 'stored encrypted in this database' : 'read from the ANTHROPIC_API_KEY environment variable'}.`
+            ? `Anthropic Claude (${s.ai.model}) turns each question into a structured query; the answer and every figure in it are then computed from the stored records, and no prices are sent to the model. The API key is ${aiKey.configured ? 'stored encrypted in this database' : 'read from the ANTHROPIC_API_KEY environment variable'}.`
             : 'Anthropic Claude is selected but no API key is available. Enter a key here or set ANTHROPIC_API_KEY on the server; until then the assistant falls back to the built-in query engine.',
     },
     smtp: {

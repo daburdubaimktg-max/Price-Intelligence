@@ -7,7 +7,7 @@ import { useAuth } from '@/lib/auth.tsx';
 import { useToast } from '@/components/ui/overlays.tsx';
 import { Badge, Button, Card, CardHeader, ErrorState, LoadingBlock, Notice, Segmented, Switch } from '@/components/ui/primitives.tsx';
 import { SEVERITIES, type Severity } from '@shared/constants.ts';
-import type { NotificationPrefs } from '@shared/api/alerts.ts';
+import type { NotificationChannels, NotificationPrefs } from '@shared/api/alerts.ts';
 import type { IntegrationsStatus } from '@shared/api/admin.ts';
 import { errorText, SEVERITY_META } from './shared.tsx';
 
@@ -22,6 +22,13 @@ export function PreferencesTab() {
     queryFn: () => apiGet<IntegrationsStatus>('/integrations'),
     enabled: canIntegrations,
     staleTime: 30_000,
+  });
+  // Readiness of the delivery channels for people who cannot open the integration settings.
+  const channels = useQuery({
+    queryKey: ['me', 'notification-channels'],
+    queryFn: () => apiGet<NotificationChannels>('/me/notification-channels'),
+    enabled: !canIntegrations,
+    staleTime: 60_000,
   });
   const [form, setForm] = useState<NotificationPrefs | null>(null);
   const [busy, setBusy] = useState(false);
@@ -134,10 +141,30 @@ export function PreferencesTab() {
               </>
             )
           ) : (
-            <Notice tone="info">
-              E-mail and webhook delivery are set up by an administrator under Administration → Integrations. Until a channel is configured, its delivery attempts are
-              recorded as “not configured” on each alert — nothing is reported as sent.
-            </Notice>
+            <>
+              {channels.data ? (
+                <>
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="font-medium text-ink">E-mail</div>
+                      <div className="text-ink-3">{channels.data.email ? 'Set up by an administrator.' : 'Not set up. E-mail deliveries are recorded as “not configured”.'}</div>
+                    </div>
+                    <Badge tone={channels.data.email ? 'good' : 'warn'}>{channels.data.email ? 'Ready' : 'Not configured'}</Badge>
+                  </div>
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="font-medium text-ink">Webhook</div>
+                      <div className="text-ink-3">{channels.data.webhook ? 'Set up by an administrator.' : 'Not set up. Webhook deliveries are recorded as “not configured”.'}</div>
+                    </div>
+                    <Badge tone={channels.data.webhook ? 'good' : 'warn'}>{channels.data.webhook ? 'Ready' : 'Not configured'}</Badge>
+                  </div>
+                </>
+              ) : null}
+              <Notice tone="info">
+                E-mail and webhook delivery are set up by an administrator under Administration → Integrations. Until a channel is configured, its delivery attempts are
+                recorded as “not configured” on each alert — nothing is reported as sent.
+              </Notice>
+            </>
           )}
         </div>
       </Card>

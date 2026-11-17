@@ -108,7 +108,12 @@ function describeStatus(
     return { status: 'simulated', reason: `Simulated demo source: generates illustrative DEMO data and is not a real integration.${lastFailed}` };
   }
   if (!latestAttempt) {
-    return { status: 'pending', reason: 'Configured, but no collection has run yet — nothing has been captured from this source so far.' };
+    // "Nothing captured" is only said when it is true: listings may already hold observations from an import,
+    // manual entry or a run that was cancelled part-way.
+    const stored = stats?.last_observed_at
+      ? ` Its listings already hold observations (latest ${stats.last_observed_at.slice(0, 10)}) from an import, manual entry or an interrupted run.`
+      : ' Nothing has been captured from this source so far.';
+    return { status: 'pending', reason: `Configured, but no collection run has finished yet.${stored}` };
   }
   if (latestAttempt.status === 'failed') {
     const streak = retailer.consecutive_failures > 1 ? ` (${retailer.consecutive_failures} failed runs in a row)` : '';

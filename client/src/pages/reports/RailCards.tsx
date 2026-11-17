@@ -12,7 +12,8 @@ import type { ReportRun } from '@shared/api/reports.ts';
 
 export function RecentReports({ onOpen, activeRunId }: { onOpen: (run: ReportRun) => void; activeRunId: number | null }) {
   const runs = useApiQuery<{ rows: ReportRun[] }>(['reports', 'runs'], '/reports/runs');
-  const rows = runs.data?.rows;
+  // the same report generated several times with the same period and filters is listed once (its latest run)
+  const rows = runs.data?.rows.filter((run, i, list) => list.findIndex((other) => other.type === run.type && JSON.stringify(other.params) === JSON.stringify(run.params)) === i);
   return (
     <Card>
       <CardHeader title="Recent reports" subtitle="Select one to generate it again with the same period and filters." />

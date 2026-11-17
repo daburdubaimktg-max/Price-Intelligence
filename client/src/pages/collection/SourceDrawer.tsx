@@ -331,7 +331,7 @@ export function SourceDrawer({ retailerId, autoTest, onAutoTestDone, onClose }: 
                     ) : connector.credential.needed === 'depends' ? (
                       <li className="flex items-start gap-2 text-[12.5px] leading-5 text-ink-3">
                         <KeyRound className="mt-[3px] size-3.5 shrink-0" aria-hidden />
-                        No {(connector.credential.label || 'credential').toLowerCase()} is stored — one is only needed if the endpoint is protected
+                        No credential is stored{connector.credential.label ? ` (${connector.credential.label})` : ''} — one is only needed if the endpoint is protected
                       </li>
                     ) : null
                   ) : null}

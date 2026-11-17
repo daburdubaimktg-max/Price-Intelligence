@@ -10,6 +10,7 @@ import { Menu } from '@/components/ui/overlays.tsx';
 import { Button, cn, IconButton, LoadingBlock } from '@/components/ui/primitives.tsx';
 import { NAV } from './nav.ts';
 import { ChangePasswordDialog } from './ChangePassword.tsx';
+import { ErrorBoundary } from './ErrorBoundary.tsx';
 
 const AssistantPanel = lazy(() => import('@/pages/assistant/AssistantPanel.tsx'));
 
@@ -195,16 +196,20 @@ export function AppShell() {
           </div>
         ) : null}
         <main className="mx-auto w-full max-w-[1680px] min-w-0 flex-1 px-3 py-5 sm:px-6 sm:py-6">
-          <Suspense fallback={<LoadingBlock className="min-h-64" />}>
-            <Outlet />
-          </Suspense>
+          <ErrorBoundary key={location.pathname}>
+            <Suspense fallback={<LoadingBlock className="min-h-64" />}>
+              <Outlet />
+            </Suspense>
+          </ErrorBoundary>
         </main>
       </div>
 
       {assistant ? (
-        <Suspense fallback={null}>
-          <AssistantPanel open={assistant} onClose={() => setAssistant(false)} />
-        </Suspense>
+        <ErrorBoundary key="assistant">
+          <Suspense fallback={null}>
+            <AssistantPanel open={assistant} onClose={() => setAssistant(false)} />
+          </Suspense>
+        </ErrorBoundary>
       ) : null}
       <ChangePasswordDialog open={changePassword} onClose={() => setChangePassword(false)} />
     </div>

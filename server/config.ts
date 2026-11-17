@@ -21,6 +21,8 @@ export interface Config {
   allowPrivateNetwork: boolean;
   /** Whether other sites may show the app inside a frame (preview panes, intranet portals). */
   allowEmbedding: boolean;
+  /** Request rate limits on sign-in and the assistant. Always on in a running server; switched off by the test harness. */
+  rateLimits: boolean;
   anthropicApiKey: string | null;
   sessionIdleHours: number;
   sessionAbsoluteHours: number;
@@ -66,6 +68,7 @@ export function loadConfig(overrides: Partial<Config> = {}): Config {
     allowPrivateNetwork: bool(env('PIOS_ALLOW_PRIVATE_NETWORK'), !isProduction),
     // Framing by other origins is refused in production unless explicitly enabled (clickjacking protection).
     allowEmbedding: bool(env('PIOS_ALLOW_EMBEDDING'), !isProduction),
+    rateLimits: true,
     anthropicApiKey: env('ANTHROPIC_API_KEY') ?? null,
     sessionIdleHours: 12,
     sessionAbsoluteHours: 24 * 7,

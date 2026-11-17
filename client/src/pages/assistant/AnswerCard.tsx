@@ -12,6 +12,7 @@ import { ChartFrame, MAX_SERIES } from '@/components/charts/kit.tsx';
 import { seriesTable, TimeSeriesChart, useSeriesChart, type Series } from '@/components/charts/charts.tsx';
 import { DataClassBadge, DemoNotice } from '@/components/domain/domain.tsx';
 import { ObservationDrawer } from '@/components/domain/observations.tsx';
+import { planTextColumns, useSidewaysOverflow } from '@/pages/reports/table-layout.ts';
 import { unitFormatter } from '@/pages/reports/units.ts';
 import type { AssistantAnswer, AssistantChart, AssistantEvidence, AssistantTable } from '@shared/api/assistant.ts';
 
@@ -55,39 +56,94 @@ function AnswerText({ text, className }: { text: string; className?: string }) {
 // ---------------------------------------------------------------------------------------------
 // Table and chart
 // ---------------------------------------------------------------------------------------------
+/** Decimals (at most two) that give every number of a column the same precision. */
+function columnDecimals(table: AssistantTable): Map<string, number> {
+  const out = new Map<string, number>();
+  for (const column of table.columns) {
+    let decimals = 0;
+    for (const row of table.rows) {
+      const value = row[column.key];
+      if (typeof value !== 'number' || !Number.isFinite(value)) continue;
+      const rounded = Math.round(value * 100) / 100;
+      decimals = Math.max(decimals, Number.isInteger(rounded) ? 0 : Number.isInteger(Math.round(rounded * 1000) / 100) ? 1 : 2);
+    }
+    out.set(column.key, decimals);
+  }
+  return out;
+}
+
 function AnswerTable({ table }: { table: AssistantTable }) {
+  // values arrive formatted; left-aligned columns are text, and a text column that is the same in every
+  // row (the one product asked about) is stated once above the grid
+  const layout = useMemo(() => planTextColumns(table.rows, table.columns.filter((c) => c.align !== 'right').map((c) => c.key), table.columns.length), [table]);
+  const folded = new Set(layout.constant.map((c) => c.key));
+  const columns = table.columns.filter((c) => !folded.has(c.key));
+  // a column that is blank in every row has nothing to state
+  const stated = layout.constant.filter((c) => c.value !== '');
+  const decimals = useMemo(() => columnDecimals(table), [table]);
+  const [wrapRef, overflowing] = useSidewaysOverflow<HTMLDivElement>([table]);
   return (
     <div>
       <div className="mb-1.5 flex items-baseline justify-between gap-3">
         <h4 className="text-[12.5px] font-semibold text-ink">{table.title}</h4>
         <span className="num shrink-0 text-[11.5px] text-ink-3">{plural(table.rows.length, 'row')}</span>
       </div>
-      <div className="table-wrap max-h-72 overflow-y-auto rounded-lg border border-line">
-        <table className="grid-table is-dense">
-          <thead>
-            <tr>
-              {table.columns.map((c) => (
-                <th key={c.key} scope="col" style={{ textAlign: c.align ?? 'left' }}>
-                  {c.label}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {table.rows.map((row, r) => (
-              <tr key={r}>
-                {table.columns.map((c) => {
-                  const value = row[c.key];
-                  return (
-                    <td key={c.key} style={{ textAlign: c.align ?? 'left' }} className={cn(c.align === 'right' && 'num whitespace-nowrap')}>
-                      {value === null || value === undefined || value === '' ? <span className="text-ink-4">—</span> : typeof value === 'number' ? fmtNumber(value, 2) : value}
-                    </td>
-                  );
-                })}
-              </tr>
+      <div className="overflow-hidden rounded-lg border border-line">
+        {stated.length ? (
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-0.5 border-b border-line bg-sunken px-3 py-1.5 text-[12px] leading-5" role="note" aria-label="Values that are the same in every row">
+            {stated.map(({ key, value }) => (
+              <span key={key} className="inline-flex items-center gap-1.5">
+                <span className="text-ink-3">{table.columns.find((c) => c.key === key)?.label}</span>
+                <span className="font-medium text-ink">{value}</span>
+              </span>
             ))}
-          </tbody>
-        </table>
+            <span className="text-ink-4">— the same in every row</span>
+          </div>
+        ) : null}
+        <div className="table-wrap max-h-80 overflow-y-auto" ref={wrapRef}>
+          <table className="grid-table is-dense text-[12.5px] [&_td]:px-2 [&_td:first-child]:pl-3 [&_td:last-child]:pr-3 [&_th]:px-2 [&_th]:whitespace-normal [&_th:first-child]:pl-3 [&_th:last-child]:pr-3">
+            <thead>
+              <tr>
+                {columns.map((c) => (
+                  <th key={c.key} scope="col" style={{ textAlign: c.align ?? 'left', verticalAlign: 'bottom' }}>
+                    {c.label}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {table.rows.map((row, r) => (
+                <tr key={r}>
+                  {columns.map((c) => {
+                    const value = row[c.key];
+                    const text = layout.columns.get(c.key);
+                    const places = decimals.get(c.key) ?? 0;
+                    const content =
+                      value === null || value === undefined || value === '' ? (
+                        <span className="text-ink-4">—</span>
+                      ) : typeof value === 'number' ? (
+                        value.toLocaleString('en-GB', { minimumFractionDigits: places, maximumFractionDigits: places })
+                      ) : (
+                        value
+                      );
+                    return (
+                      <td key={c.key} style={{ textAlign: c.align ?? 'left' }} className={cn(c.align === 'right' && 'num', !text?.wrap && 'whitespace-nowrap')}>
+                        {text?.wrap ? (
+                          <span className="block" style={{ minWidth: text.minWidth }}>
+                            {content}
+                          </span>
+                        ) : (
+                          content
+                        )}
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        {overflowing ? <p className="border-t border-line bg-sunken px-3 py-1 text-[11.5px] leading-4 text-ink-3">Scroll sideways for the remaining columns.</p> : null}
       </div>
       {table.note ? <p className="mt-1.5 text-[12px] leading-[18px] text-ink-3">{table.note}</p> : null}
     </div>
@@ -128,6 +184,8 @@ function Evidence({ evidence, demo, onNavigate }: { evidence: AssistantEvidence;
   const [observationId, setObservationId] = useState<number | null>(null);
   const [allIds, setAllIds] = useState(false);
   const ids = allIds ? evidence.observation_ids : evidence.observation_ids.slice(0, SAMPLE_IDS);
+  // two links to the same place are one link
+  const links = evidence.links.filter((link, i, list) => list.findIndex((other) => other.href === link.href) === i);
   const sameDay = evidence.first_observed_at?.slice(0, 10) === evidence.last_observed_at?.slice(0, 10);
   return (
     <section className="rounded-lg border border-line bg-sunken px-3.5 py-3" aria-label="Evidence">
@@ -187,9 +245,9 @@ function Evidence({ evidence, demo, onNavigate }: { evidence: AssistantEvidence;
           ) : null}
         </div>
       ) : null}
-      {evidence.links.length ? (
+      {links.length ? (
         <div className="mt-3 flex flex-wrap gap-2">
-          {evidence.links.map((link) => (
+          {links.map((link) => (
             <Link
               key={link.href}
               to={link.href}

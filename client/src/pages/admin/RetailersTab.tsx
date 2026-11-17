@@ -16,7 +16,7 @@ import type { RetailerRow } from '@shared/api/catalogue.ts';
 import type { CollectionHealth, CollectionJob } from '@shared/api/collection.ts';
 import { RetailerDialog, useConnectors } from './RetailerDialog.tsx';
 import { RetailerDrawer } from './RetailerDrawer.tsx';
-import { errorText, useRefresh } from './shared.tsx';
+import { announceJob, errorText, useRefresh, waitForJob } from './shared.tsx';
 
 type RetailersUrl = {
   r_market: string | undefined;
@@ -91,16 +91,13 @@ export function RetailersTab() {
   async function run(retailer: RetailerRow) {
     try {
       const result = await apiPost<{ job: CollectionJob }>(`/collection/retailers/${retailer.id}/run`);
-      if (result.job.status === 'not_configured') {
-        // The server records the attempt, but nothing was requested from the source.
-        toast.error(`Nothing was collected — ${retailer.name} is not configured`, result.job.error_message ?? undefined);
-      } else {
-        toast.success(
-          result.job.data_class === 'simulated' ? 'Simulated demo run started' : 'Collection started',
-          `Job #${result.job.id} for ${retailer.name}. Its outcome appears in the Data Collection Centre.`,
-        );
-      }
-      await refreshAll();
+      // "Requested" is all that is known now; the outcome is announced once the job has really finished.
+      toast.info(`Run requested for ${retailer.name}`, `Job #${result.job.id} — its outcome follows.`);
+      void refreshAll();
+      const finished = await waitForJob(result.job.id);
+      if (finished) announceJob(toast, finished, retailer.name);
+      else toast.info('Still running', `Job #${result.job.id} for ${retailer.name} has not finished yet. Follow it in the Data Collection Centre.`);
+      await refresh(['retailers'], ['collection'], ['listings'], ['alerts']);
     } catch (err) {
       toast.error('The collection was not started', errorText(err));
     }
@@ -127,8 +124,8 @@ export function RetailersTab() {
       header: 'Retailer',
       sortKey: 'name',
       cell: (r) => (
-        <div className="min-w-[12rem]">
-          <div className="flex items-center gap-1.5">
+        <div className="min-w-[9rem] sm:min-w-[12rem]">
+          <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
             <span className="font-medium text-ink">{r.name}</span>
             {r.is_demo ? <DemoBadge /> : null}
           </div>
@@ -217,6 +214,7 @@ export function RetailersTab() {
       header: 'Listings',
       sortKey: 'listing_count',
       align: 'right',
+      hideBelow: 'sm',
       headerTitle: 'Active listings / all listings',
       cell: (r) => (
         <span>

@@ -24,12 +24,19 @@ export interface RateInfo {
 }
 
 /** Latest known rate per currency at or before `asOf` (falls back to the earliest later rate). */
+/**
+ * Illustrative DEMO rates only stand in while a currency has no real rate at all. As soon as one real rate exists
+ * for a currency (entered or fetched), its demo rates are ignored — at every date.
+ */
+const REAL_FIRST = `(r.is_demo = 0 OR NOT EXISTS (
+  SELECT 1 FROM exchange_rates x WHERE x.base_currency = r.base_currency AND x.quote_currency = r.quote_currency AND x.is_demo = 0))`;
+
 export function latestRates(ctx: AppContext, asOf?: string): Map<string, RateInfo> {
   const cutoff = asOf ?? '9999-12-31T23:59:59.999Z';
   const rows = ctx.db.all<{ quote_currency: string; rate: number; as_of: string; source: string; is_demo: number }>(
     `SELECT quote_currency, rate, as_of, source, is_demo FROM (
        SELECT r.*, ROW_NUMBER() OVER (PARTITION BY quote_currency ORDER BY as_of DESC, id DESC) AS rn
-       FROM exchange_rates r WHERE base_currency = ? AND as_of <= ?
+       FROM exchange_rates r WHERE base_currency = ? AND as_of <= ? AND ${REAL_FIRST}
      ) WHERE rn = 1`,
     [FX_BASE, cutoff],
   );
@@ -42,7 +49,7 @@ export function latestRates(ctx: AppContext, asOf?: string): Map<string, RateInf
     const later = ctx.db.all<{ quote_currency: string; rate: number; as_of: string; source: string; is_demo: number }>(
       `SELECT quote_currency, rate, as_of, source, is_demo FROM (
          SELECT r.*, ROW_NUMBER() OVER (PARTITION BY quote_currency ORDER BY as_of ASC, id ASC) AS rn
-         FROM exchange_rates r WHERE base_currency = ?
+         FROM exchange_rates r WHERE base_currency = ? AND ${REAL_FIRST}
        ) WHERE rn = 1`,
       [FX_BASE],
     );

@@ -1,5 +1,5 @@
 /** Core UI primitives. Every screen is assembled from these so spacing, type and states stay consistent. */
-import { forwardRef, useId, type ButtonHTMLAttributes, type HTMLAttributes, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes, type TextareaHTMLAttributes } from 'react';
+import { Children, cloneElement, createContext, forwardRef, isValidElement, useContext, useId, type ButtonHTMLAttributes, type HTMLAttributes, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes, type TextareaHTMLAttributes } from 'react';
 import { Tabs as RTabs, Tooltip as RTooltip } from 'radix-ui';
 import { clsx, type ClassValue } from 'clsx';
 import { ArrowDown, ArrowUp, ChevronDown, CircleAlert, Inbox, LoaderCircle, Minus, type LucideIcon } from 'lucide-react';
@@ -97,27 +97,44 @@ const CONTROL =
   'w-full rounded-lg border border-line-strong bg-surface px-3 text-[13px] text-ink placeholder:text-ink-4 transition-colors ' +
   'hover:border-ink-4 focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20 disabled:bg-sunken disabled:text-ink-3';
 
+/** Set by <Field> so the control inside it announces the field's hint or error as its description. */
+const FieldContext = createContext<{ describedBy?: string; invalid: boolean } | null>(null);
+
 export const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputElement> & { invalid?: boolean }>(function Input(
   { className, invalid, ...rest },
   ref,
 ) {
-  return <input ref={ref} className={cn(CONTROL, 'h-[34px]', invalid && 'border-crit focus:border-crit focus:ring-crit/20', className)} aria-invalid={invalid || undefined} {...rest} />;
+  const field = useContext(FieldContext);
+  const bad = invalid || field?.invalid;
+  return (
+    <input
+      ref={ref}
+      className={cn(CONTROL, 'h-[34px]', bad && 'border-crit focus:border-crit focus:ring-crit/20', className)}
+      aria-invalid={bad || undefined}
+      aria-describedby={field?.describedBy}
+      {...rest}
+    />
+  );
 });
 
 export const Textarea = forwardRef<HTMLTextAreaElement, TextareaHTMLAttributes<HTMLTextAreaElement> & { invalid?: boolean }>(function Textarea(
   { className, invalid, rows = 3, ...rest },
   ref,
 ) {
-  return <textarea ref={ref} rows={rows} className={cn(CONTROL, 'py-2 leading-5', invalid && 'border-crit', className)} {...rest} />;
+  const field = useContext(FieldContext);
+  const bad = invalid || field?.invalid;
+  return <textarea ref={ref} rows={rows} className={cn(CONTROL, 'py-2 leading-5', bad && 'border-crit', className)} aria-invalid={bad || undefined} aria-describedby={field?.describedBy} {...rest} />;
 });
 
 export const Select = forwardRef<HTMLSelectElement, SelectHTMLAttributes<HTMLSelectElement> & { invalid?: boolean }>(function Select(
   { className, invalid, children, ...rest },
   ref,
 ) {
+  const field = useContext(FieldContext);
+  const bad = invalid || field?.invalid;
   return (
     <span className={cn('relative inline-flex w-full', className)}>
-      <select ref={ref} className={cn(CONTROL, 'h-[34px] appearance-none pr-8', invalid && 'border-crit')} {...rest}>
+      <select ref={ref} className={cn(CONTROL, 'h-[34px] appearance-none pr-8', bad && 'border-crit')} aria-invalid={bad || undefined} aria-describedby={field?.describedBy} {...rest}>
         {children}
       </select>
       <ChevronDown className="pointer-events-none absolute top-1/2 right-2.5 size-3.5 -translate-y-1/2 text-ink-3" aria-hidden />
@@ -155,17 +172,55 @@ export function Switch({ checked, onChange, label, disabled }: { checked: boolea
   );
 }
 
-/** Label + control + hint/error, stacked. */
+/**
+ * Label + control + hint/error, stacked.
+ *
+ * With a single control component inside (Input, Select, a picker…), the label is tied to it by id, so the control's
+ * accessible name is exactly the label text and the hint or error is announced as its description. Composite content
+ * (several controls in a row) falls back to a wrapping label.
+ */
 export function Field({ label, hint, error, required, children, className }: { label: ReactNode; hint?: ReactNode; error?: ReactNode; required?: boolean; children: ReactNode; className?: string }) {
+  const id = useId();
+  const noteId = error || hint ? `${id}-note` : undefined;
+  const single = Children.count(children) === 1 && isValidElement<{ id?: string }>(children) && typeof children.type !== 'string' ? children : null;
+  const controlId = single ? (single.props.id ?? `${id}-control`) : undefined;
+  const caption = (
+    <>
+      {label}
+      {required ? (
+        <span className="text-crit-ink" aria-hidden>
+          {' '}
+          *
+        </span>
+      ) : null}
+    </>
+  );
+  const context = { describedBy: noteId, invalid: !!error };
   return (
-    <label className={cn('flex min-w-0 flex-col gap-1', className)}>
-      <span className="text-[12px] font-medium text-ink-2">
-        {label}
-        {required ? <span className="text-crit-ink"> *</span> : null}
-      </span>
-      {children}
-      {error ? <span className="text-[12px] text-crit-ink">{error}</span> : hint ? <span className="text-[12px] text-ink-3">{hint}</span> : null}
-    </label>
+    <div className={cn('flex min-w-0 flex-col gap-1', className)}>
+      {single ? (
+        <>
+          <label htmlFor={controlId} className="text-[12px] font-medium text-ink-2">
+            {caption}
+          </label>
+          <FieldContext.Provider value={context}>{single.props.id ? single : cloneElement(single, { id: controlId })}</FieldContext.Provider>
+        </>
+      ) : (
+        <label className="flex min-w-0 flex-col gap-1">
+          <span className="text-[12px] font-medium text-ink-2">{caption}</span>
+          <FieldContext.Provider value={context}>{children}</FieldContext.Provider>
+        </label>
+      )}
+      {error ? (
+        <span id={noteId} className="text-[12px] text-crit-ink">
+          {error}
+        </span>
+      ) : hint ? (
+        <span id={noteId} className="text-[12px] text-ink-3">
+          {hint}
+        </span>
+      ) : null}
+    </div>
   );
 }
 
@@ -212,7 +267,8 @@ export function CardHeader({ title, subtitle, actions, className }: { title: Rea
         <h3 className="text-[13.5px] leading-5 font-semibold text-ink">{title}</h3>
         {subtitle ? <p className="mt-0.5 text-[12px] leading-4 text-ink-3">{subtitle}</p> : null}
       </div>
-      {actions ? <div className="flex shrink-0 flex-wrap items-center gap-2">{actions}</div> : null}
+      {/* max-w-full: on a narrow card the controls wrap inside it instead of widening the page */}
+      {actions ? <div className="flex max-w-full min-w-0 flex-wrap items-center gap-2">{actions}</div> : null}
     </div>
   );
 }

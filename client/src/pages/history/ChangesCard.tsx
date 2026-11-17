@@ -1,9 +1,9 @@
 /** Where prices moved: price changes of the selected period counted per retailer, market, brand, category or product. */
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { ArrowDown, ArrowUp } from 'lucide-react';
 import { fmtNumber, fmtPct, fmtRelative } from '@/lib/format.ts';
 import { useApiQuery } from '@/lib/hooks.ts';
-import { Card, CardHeader, EmptyState, ErrorState, LoadingBlock, Segmented } from '@/components/ui/primitives.tsx';
+import { Button, Card, CardHeader, EmptyState, ErrorState, LoadingBlock, Segmented } from '@/components/ui/primitives.tsx';
 import { DataTable, type Column } from '@/components/ui/data-table.tsx';
 import { DIVERGING } from '@/components/charts/kit.tsx';
 import { DemoBadge, OwnershipDot } from '@/components/domain/domain.tsx';
@@ -19,12 +19,16 @@ const GROUPS: Array<{ value: EventGroupBy; label: string; column: string; filter
   { value: 'product', label: 'Product', column: 'Product', filterKey: 'product_id' },
 ];
 
+const COLLAPSED_ROWS = 10;
+
 export function ChangesCard({ filters }: { filters: HistoryFilters }) {
   const { state, set } = filters;
   const group = GROUPS.find((g) => g.value === state.chg_group) ?? GROUPS[0]!;
   const query = useApiQuery<PriceChangeBreakdown>(['history', 'changes-by'], '/events/summary', { ...filters.scopeQuery, group_by: group.value }, { enabled: filters.ready });
   const data = query.data;
   const rows = data?.rows;
+  const [expanded, setExpanded] = useState(false);
+  const shown = rows && !expanded ? rows.slice(0, COLLAPSED_ROWS) : rows;
   const top = Math.max(1, ...(rows ?? []).map((r) => Math.max(r.increases, r.decreases)));
 
   const columns = useMemo<Array<Column<PriceChangeBreakdownRow>>>(
@@ -115,14 +119,25 @@ export function ChangesCard({ filters }: { filters: HistoryFilters }) {
         <div className={isRefetching(query) ? 'opacity-60' : ''}>
           <DataTable
             columns={columns}
-            rows={rows}
+            rows={shown ?? rows}
             rowKey={(r) => r.key}
             dense
             onRowClick={(r) => {
               if (r.id !== null) set({ [group.filterKey]: String(r.id), page: '1' });
             }}
           />
-          {data && data.totals.groups > rows.length ? <p className="border-t border-line px-4 py-2 text-[12px] text-ink-3">Showing the {rows.length} most active of {fmtNumber(data.totals.groups)}.</p> : null}
+          {rows.length > COLLAPSED_ROWS || (data && data.totals.groups > rows.length) ? (
+            <div className="flex flex-wrap items-center justify-between gap-2 border-t border-line px-4 py-2 text-[12px] text-ink-3">
+              <span>
+                Showing the {fmtNumber((shown ?? rows).length)} most active of {fmtNumber(data?.totals.groups ?? rows.length)}.
+              </span>
+              {rows.length > COLLAPSED_ROWS ? (
+                <Button variant="ghost" size="sm" onClick={() => setExpanded((v) => !v)}>
+                  {expanded ? 'Show fewer' : `Show all ${fmtNumber(rows.length)}`}
+                </Button>
+              ) : null}
+            </div>
+          ) : null}
         </div>
       )}
     </Card>

@@ -5,14 +5,13 @@
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Database, Download, FileSpreadsheet, FlaskConical, RefreshCw, Trash2 } from 'lucide-react';
-import { apiGet, apiPost, download } from '@/lib/api.ts';
+import { ApiError, apiGet, apiPost, download } from '@/lib/api.ts';
 import { useAuth } from '@/lib/auth.tsx';
 import { fmtBytes, fmtNumber, fmtRelative, titleCase } from '@/lib/format.ts';
 import { ConfirmDialog, useToast } from '@/components/ui/overlays.tsx';
 import { Badge, Button, Card, CardHeader, DescriptionList, ErrorState, LoadingBlock, Notice } from '@/components/ui/primitives.tsx';
 import { MarketTime } from '@/components/domain/domain.tsx';
 import type { DemoActionResult, SystemInfo } from '@shared/api/admin.ts';
-import type { CollectionHealth } from '@shared/api/collection.ts';
 import type { DatabaseMirrorStatus } from '@shared/api/observations.ts';
 import { errorText, PathLine } from './shared.tsx';
 
@@ -43,7 +42,7 @@ export function DatabaseTab() {
   const [confirmPurge, setConfirmPurge] = useState(false);
   const [demoBusy, setDemoBusy] = useState<'purge' | 'seed' | null>(null);
   const [demoResult, setDemoResult] = useState<DemoActionResult | null>(null);
-  const [demoError, setDemoError] = useState<string | null>(null);
+  const [demoError, setDemoError] = useState<{ action: 'purge' | 'seed'; message: string; conflict: boolean } | null>(null);
 
   const mirror = useQuery({
     queryKey: ['database', 'mirror'],
@@ -51,13 +50,6 @@ export function DatabaseTab() {
     refetchInterval: (query) => (query.state.data?.generating ? 3000 : 60_000),
   });
   const system = useQuery({ queryKey: ['admin', 'system'], queryFn: () => apiGet<SystemInfo>('/admin/system'), enabled: canSystem });
-  // The mirror is refreshed by the server's scheduler; its status endpoint does not say whether that scheduler runs.
-  const health = useQuery({
-    queryKey: ['collection', 'health', { days: 1 }],
-    queryFn: () => apiGet<CollectionHealth>('/collection/health', { days: 1 }),
-    staleTime: 5 * 60_000,
-  });
-  const schedulerOff = health.data ? !health.data.scheduler.enabled : false;
 
   async function downloadFile(kind: 'export' | 'mirror') {
     setDownloading(kind);
@@ -96,7 +88,7 @@ export function DatabaseTab() {
       // Every screen depends on this, so everything is reloaded.
       await client.invalidateQueries();
     } catch (err) {
-      setDemoError(errorText(err));
+      setDemoError({ action, message: errorText(err), conflict: err instanceof ApiError && err.status === 409 && !/already loaded/i.test(err.message) });
     } finally {
       setDemoBusy(null);
       setConfirmPurge(false);
@@ -146,7 +138,7 @@ export function DatabaseTab() {
       <Card>
         <CardHeader
           title="Excel mirror on the server"
-          subtitle="A workbook file kept on the server, regenerated when the data has changed."
+          subtitle="The same workbook, kept as a file on the server."
           actions={
             m ? (
               m.generating || refreshing ? (
@@ -173,10 +165,9 @@ export function DatabaseTab() {
                   The automatic mirror is switched off on this server (PIOS_EXCEL_MIRROR=off). You can still generate it on demand.
                 </Notice>
               ) : null}
-              {m.enabled && schedulerOff ? (
-                <Notice tone="warn" className="mb-3" title="Not refreshed automatically on this server">
-                  The server’s scheduler is switched off (PIOS_SCHEDULER=off), and it is the scheduler that keeps the mirror current. The file only changes when someone presses
-                  “Refresh now”.
+              {m.enabled && !m.auto_refresh ? (
+                <Notice tone="warn" className="mb-3" title="Not refreshed automatically right now">
+                  This server process is not running its periodic housekeeping, so the file only changes when someone presses “Refresh now”.
                 </Notice>
               ) : null}
               {m.last_error ? (
@@ -200,7 +191,7 @@ export function DatabaseTab() {
                   },
                   {
                     label: 'Automatic refresh',
-                    value: !m.enabled ? 'Off' : schedulerOff ? 'Not running (scheduler off)' : `When data changed, at most every ${fmtNumber(m.interval_minutes)} minutes`,
+                    value: !m.enabled ? 'Off' : !m.auto_refresh ? 'Not running' : `When data changed, at most every ${fmtNumber(m.interval_minutes)} minutes`,
                   },
                 ]}
               />
@@ -267,7 +258,13 @@ export function DatabaseTab() {
 
           {demoError ? (
             <Notice tone="crit" className="mt-3" title="The demo dataset was not changed">
-              {demoError}
+              {demoError.message}
+              {demoError.action === 'seed' && demoError.conflict ? (
+                <p className="mt-1">
+                  The demo dataset could not be added next to records that already exist — for example a former demo product that is kept as a regular product because real
+                  listings were matched to it. Nothing was loaded.
+                </p>
+              ) : null}
             </Notice>
           ) : null}
           {demoResult ? (
@@ -311,8 +308,8 @@ export function DatabaseTab() {
           their promotions, alerts, collection runs and the illustrative exchange rates.
         </p>
         <p className="mt-2">
-          <strong className="font-semibold text-ink">Real data is never touched.</strong> Markets, alert rules, users and settings stay. Real listings that were matched to a
-          demo product become unmatched, and a demo retailer that already has real listings is kept as a manual source. You can load the demo dataset again later.
+          <strong className="font-semibold text-ink">Real data is never touched.</strong> Markets, alert rules, users and settings stay. A demo product that real listings
+          were matched to has already become a regular product and is kept with its brand and category; a demo retailer that has real listings is kept as a manual source.
         </p>
       </ConfirmDialog>
     </div>

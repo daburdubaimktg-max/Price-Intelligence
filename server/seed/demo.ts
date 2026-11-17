@@ -125,8 +125,13 @@ export async function seedDemo(ctx: AppContext): Promise<Record<string, number>>
 
     const productIds = new Map<string, number>();
     const productByKey = new Map<string, DemoProduct>();
+    let productsReused = 0;
     DEMO_PRODUCTS.forEach((p, index) => {
-      const id = db.run(
+      // A demo product that real data came to depend on was kept as a real product when demo data was removed.
+      // Loading the demo dataset again attaches to that product instead of colliding with it.
+      const kept = db.get<{ id: number }>('SELECT id FROM products WHERE sku = ? OR gtin = ?', [`DEMO-${p.key.toUpperCase()}`, demoGtin(index + 1)]);
+      if (kept) productsReused++;
+      const id = kept?.id ?? db.run(
         `INSERT INTO products (brand_id, name, product_line, category_id, subcategory_id, sku, gtin, pack_size, pack_unit, units_per_pack,
            description, status, is_demo, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, 'active', 1, ?, ?)`,
@@ -142,28 +147,29 @@ export async function seedDemo(ctx: AppContext): Promise<Record<string, number>>
         db.run('INSERT OR IGNORE INTO product_markets (product_id, market_id) VALUES (?, ?)', [id, markets.get(code)!.id]);
       }
     });
-    counts.products = productIds.size;
+    counts.products = productIds.size - productsReused;
+    if (productsReused) counts.products_reused = productsReused;
 
+    let mappingCount = 0;
     for (const m of DEMO_MAPPINGS) {
-      db.run(
-        `INSERT INTO competitor_mappings (own_product_id, competitor_product_id, equivalence, status, score, rationale, decided_by, decided_at, is_demo, created_at, updated_at)
+      mappingCount += db.run(
+        `INSERT OR IGNORE INTO competitor_mappings (own_product_id, competitor_product_id, equivalence, status, score, rationale, decided_by, decided_at, is_demo, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
         [
           productIds.get(m.own)!, productIds.get(m.competitor)!, m.equivalence, m.status, m.status === 'suggested' ? 0.8 : null, m.rationale,
           m.status === 'approved' ? analyst : null, m.status === 'approved' ? stamp : null, stamp, stamp,
         ],
-      );
+      ).changes;
     }
-    counts.competitor_mappings = DEMO_MAPPINGS.length;
+    counts.competitor_mappings = mappingCount;
 
-    const twinPackVariant = db.run(
-      `INSERT INTO product_variants (product_id, name, pack_size, pack_unit, units_per_pack, notes, created_at) VALUES (?, ?, 200, 'ml', 2, ?, ?)`,
-      [productIds.get('amla200')!, 'Twin pack 2 × 200ml', 'DEMO variant: unit price is calculated on 400ml.', stamp],
-    ).lastInsertRowid;
-    const bonusPackVariant = db.run(
-      `INSERT INTO product_variants (product_id, name, pack_size, pack_unit, units_per_pack, notes, created_at) VALUES (?, ?, 500, 'ml', 1, ?, ?)`,
-      [productIds.get('vatbs400')!, 'Bonus pack 400ml + 100ml free', 'DEMO variant: unit price is calculated on 500ml.', stamp],
-    ).lastInsertRowid;
+    const ensureVariant = (productId: number, name: string, size: number, units: number, notes: string): number =>
+      db.get<{ id: number }>('SELECT id FROM product_variants WHERE product_id = ? AND name = ?', [productId, name])?.id ??
+      db.run(`INSERT INTO product_variants (product_id, name, pack_size, pack_unit, units_per_pack, notes, created_at) VALUES (?, ?, ?, 'ml', ?, ?, ?)`, [
+        productId, name, size, units, notes, stamp,
+      ]).lastInsertRowid;
+    const twinPackVariant = ensureVariant(productIds.get('amla200')!, 'Twin pack 2 × 200ml', 200, 2, 'DEMO variant: unit price is calculated on 400ml.');
+    const bonusPackVariant = ensureVariant(productIds.get('vatbs400')!, 'Bonus pack 400ml + 100ml free', 500, 1, 'DEMO variant: unit price is calculated on 500ml.');
 
     // ---- exchange rates (illustrative, flagged DEMO) -------------------------------------------
     let rateCount = 0;
@@ -217,8 +223,15 @@ export async function seedDemo(ctx: AppContext): Promise<Record<string, number>>
       ).lastInsertRowid;
 
     let listingCount = 0;
+    let retailersSkipped = 0;
     for (const def of DEMO_RETAILERS) {
       const market = markets.get(def.market)!;
+      // A demo retailer that was handed over as a real source (it had real listings when demo data was removed)
+      // is left alone: nothing simulated is attached to a real source.
+      if (db.get('SELECT 1 FROM retailers WHERE name = ? AND market_id = ?', [def.name, market.id])) {
+        retailersSkipped++;
+        continue;
+      }
       const retailerId = db.run(
         `INSERT INTO retailers (name, website, country_code, market_id, currency_code, collection_method, collection_frequency, is_enabled,
            connector_config, notes, is_demo, created_at, updated_at)
@@ -288,6 +301,7 @@ export async function seedDemo(ctx: AppContext): Promise<Record<string, number>>
       plans.push(plan);
     }
     counts.retailers = plans.length;
+    if (retailersSkipped) counts.retailers_skipped = retailersSkipped;
     counts.listings = listingCount;
 
     // ---- price history -------------------------------------------------------------------------

@@ -71,6 +71,7 @@ describe('product report', () => {
     assert.equal(rows[0]!.price, 22);
     assert.equal(rows[0]!.unit_price, 11);
     assert.equal(rows[0]!.source, 'Manual entry');
+    assert.equal(rows[0]!.availability, 'In stock');
     assert.equal(rows[0]!.observed, known.at(1));
   });
 
@@ -107,6 +108,15 @@ describe('product report', () => {
     assert.equal(rival.unit_price, 9);
     assert.equal(rival.gap_pct, 22.2);
     assert.match(String(rival.basis), /unit price/i);
+  });
+
+  it('counts a report regenerated straight away as the same run', async () => {
+    const again = await generate({ type: 'product_report', product_id: fx.ownProductId, days: 14 });
+    assert.equal(again.run_id, report.run_id);
+    const other = await generate({ type: 'product_report', product_id: fx.ownProductId, days: 7 });
+    assert.notEqual(other.run_id, report.run_id, 'different filters are a different run');
+    const someoneElse = await generate({ type: 'product_report', product_id: fx.ownProductId, days: 14 }, 'viewer');
+    assert.notEqual(someoneElse.run_id, report.run_id, 'runs are per person');
   });
 
   it('is recorded in the list of generated reports', async () => {

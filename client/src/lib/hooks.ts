@@ -147,11 +147,14 @@ export function useIsNarrow(maxWidth = 767): boolean {
 }
 
 /** Calendar helpers on ISO dates (YYYY-MM-DD). */
+/** Adds days to a YYYY-MM-DD date. An empty or malformed date (e.g. "today" not loaded yet) is returned unchanged. */
 export function addDays(isoDate: string, days: number): string {
   const d = new Date(`${isoDate}T00:00:00Z`);
+  if (Number.isNaN(d.getTime())) return isoDate;
   d.setUTCDate(d.getUTCDate() + days);
   return d.toISOString().slice(0, 10);
 }
 export function diffDays(from: string, to: string): number {
-  return Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000);
+  const days = Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000);
+  return Number.isNaN(days) ? 0 : days;
 }

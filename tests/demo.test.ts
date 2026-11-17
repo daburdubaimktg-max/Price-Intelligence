@@ -13,6 +13,8 @@ let fx: Fixture;
 let known: KnownPrices;
 let seedCounts: Record<string, number>;
 let strayListingId: number;
+let adoptedProductId: number;
+let adoptedRetailerId: number;
 
 const count = (sql: string, params: unknown[] = []) => t.ctx.db.scalar<number>(sql, params as never) ?? 0;
 const get = async (url: string) => {
@@ -167,6 +169,24 @@ describe('removing the DEMO dataset', () => {
     ).lastInsertRowid;
     const res = ingestObservations(t.ctx, [{ listing_id: strayListingId, observed_at: known.at(1), current_price: 15, regular_price: 15, availability: 'in_stock' }], { sourceMethod: 'manual', userId: 1 });
     assert.equal(res.inserted, 1);
+
+    // Through the application, real data that starts to depend on demo records adopts them as real:
+    // a real listing for a demo product at the real retailer …
+    adoptedProductId = t.ctx.db.get<{ id: number }>(`SELECT id FROM products WHERE is_demo = 1 AND sku = 'DEMO-PARA200'`)!.id;
+    const adopt = await t.api('POST', '/listings', { body: { retailer_id: fx.retailerId, url: 'https://testmart.example/p/parachute-200', product_id: adoptedProductId } });
+    assert.equal(adopt.status, 201, adopt.raw.slice(0, 200));
+    // A listing added at a demo retailer through the application is itself a demo listing …
+    adoptedRetailerId = t.ctx.db.get<{ id: number }>(`SELECT id FROM retailers WHERE is_demo = 1 AND name = 'Carrefour UAE'`)!.id;
+    const atDemoRetailer = await t.api('POST', '/listings', { body: { retailer_id: adoptedRetailerId, url: 'https://demo.invalid/carrefour-uae/own-oil-200', product_id: fx.ownProductId } });
+    assert.equal(atDemoRetailer.status, 201, atDemoRetailer.raw.slice(0, 200));
+    assert.equal(atDemoRetailer.body.is_demo, 1);
+    // … whereas a real listing recorded directly against a demo retailer (legacy or migrated data) makes it a real source.
+    t.ctx.db.run(
+      `INSERT INTO retailer_listings (retailer_id, product_id, external_id, url, title, match_status, is_demo, created_at, updated_at)
+       VALUES (?, ?, 'legacy-own-oil', 'https://www.carrefouruae.example/p/own-oil-200', 'Own oil (legacy record)', 'matched', 0, ?, ?)`,
+      [adoptedRetailerId, fx.ownProductId, now, now],
+    );
+
     const purge = await t.api('POST', '/admin/demo/purge', { body: {} });
     assert.equal(purge.status, 200, purge.raw.slice(0, 300));
     assert.equal(purge.body.counts.observations, seedCounts.observations);
@@ -201,10 +221,27 @@ describe('removing the DEMO dataset', () => {
     assert.equal(count('SELECT COUNT(*) FROM price_observations WHERE listing_id = ? AND current_price = 15', [strayListingId]), 1);
   });
 
-  it('can be loaded again afterwards', async () => {
+  it('keeps demo records that real data adopted, as real records', () => {
+    const product = t.ctx.db.get<{ is_demo: number; name: string }>('SELECT is_demo, name FROM products WHERE id = ?', [adoptedProductId])!;
+    assert.equal(product.is_demo, 0);
+    const retailer = t.ctx.db.get<{ is_demo: number; collection_method: string; connector_config: string }>('SELECT is_demo, collection_method, connector_config FROM retailers WHERE id = ?', [adoptedRetailerId])!;
+    assert.equal(retailer.is_demo, 0);
+    assert.equal(retailer.collection_method, 'manual', 'a kept source no longer simulates anything');
+    assert.equal(retailer.connector_config, '{}');
+    assert.equal(count('SELECT COUNT(*) FROM retailer_listings WHERE retailer_id = ?', [adoptedRetailerId]), 1, 'only the real listing remains');
+  });
+
+  it('can be loaded again afterwards, attaching to adopted products and leaving adopted retailers alone', async () => {
     const again = await t.api('POST', '/admin/demo/seed', { body: {} });
     assert.equal(again.status, 200, again.raw.slice(0, 300));
-    assert.equal(again.body.counts.products, 31);
+    assert.equal(again.body.counts.products, 30);
+    assert.equal(again.body.counts.products_reused, 1);
+    assert.equal(again.body.counts.retailers, 29);
+    assert.equal(again.body.counts.retailers_skipped, 1);
+    assert.equal(count(`SELECT COUNT(*) FROM products WHERE sku LIKE 'DEMO-%'`), 31, 'no duplicate catalogue entries');
+    assert.equal(count('SELECT is_demo FROM products WHERE id = ?', [adoptedProductId]), 0, 'the adopted product stays real');
+    assert.equal(count('SELECT COUNT(*) FROM retailer_listings WHERE retailer_id = ? AND is_demo = 1', [adoptedRetailerId]), 0, 'nothing simulated is attached to a real source');
+    assert.ok(count('SELECT COUNT(*) FROM price_observations o JOIN retailer_listings l ON l.id = o.listing_id WHERE l.product_id = ? AND o.is_demo = 1', [adoptedProductId]) > 0, 'demo listings of the adopted product are still flagged DEMO');
     assert.equal(count('SELECT COUNT(*) FROM price_observations WHERE is_demo = 0'), 9);
     assert.equal((await get('/auth/me')).app.demo_data_present, true);
   });

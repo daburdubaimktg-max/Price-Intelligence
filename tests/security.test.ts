@@ -41,6 +41,14 @@ describe('API access', () => {
     assert.equal((await t.api('POST', '/observations', { body: observation, as: 'analyst' })).status, 201);
   });
 
+  it('tells every user which notification channels are ready, without revealing their settings', async () => {
+    const res = await t.api('GET', '/me/notification-channels', { as: 'viewer' });
+    assert.equal(res.status, 200);
+    assert.deepEqual(res.body, { in_app: true, email: false, webhook: false });
+    assert.equal((await t.api('GET', '/integrations', { as: 'viewer' })).status, 403);
+    assert.equal((await t.api('GET', '/me/notification-channels', { as: null })).status, 401);
+  });
+
   it('rejects an invalid or revoked session token', async () => {
     const res = await t.app.inject({ method: 'GET', url: '/api/products', headers: { authorization: 'Bearer not-a-real-token' } });
     assert.equal(res.statusCode, 401);
@@ -63,6 +71,26 @@ describe('cross-site requests', () => {
     assert.equal(sameOrigin.statusCode, 201);
     const read = await t.app.inject({ method: 'GET', url: '/api/products', headers: { cookie, 'sec-fetch-site': 'cross-site' } });
     assert.equal(read.statusCode, 200, 'reads are not state-changing');
+  });
+});
+
+describe('rate limits', () => {
+  it('throttles repeated sign-in attempts and assistant questions from one address', async () => {
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pios-rate-'));
+    const { app } = await buildApp({ dataDir, schedulerEnabled: false, seedDemo: false, logLevel: 'silent' });
+    try {
+      const statuses: number[] = [];
+      for (let i = 0; i < 22; i++) {
+        const res = await app.inject({ method: 'POST', url: '/api/auth/login', payload: { email: 'nobody@example.com', password: 'wrong-password' } });
+        statuses.push(res.statusCode);
+      }
+      assert.deepEqual([...new Set(statuses.slice(0, 20))], [401], 'the first 20 attempts are answered normally');
+      assert.equal(statuses[20], 429);
+      assert.equal(statuses[21], 429);
+    } finally {
+      await app.close();
+      fs.rmSync(dataDir, { recursive: true, force: true });
+    }
   });
 });
 

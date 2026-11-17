@@ -161,33 +161,33 @@ export function UsersTab() {
   }
 
   const roleRows = roles.data?.rows ?? [];
+  const statusBadges = (u: UserRow) => (
+    <span className="flex flex-wrap gap-1">
+      <Badge tone={u.is_active ? 'good' : 'outline'}>{u.is_active ? 'Active' : 'Inactive'}</Badge>
+      {u.must_change_password ? <Badge tone="warn">Must change password</Badge> : null}
+      {u.uses_default_password ? <Badge tone="demo">Demo password</Badge> : null}
+      {u.locked ? <Badge tone="crit">Locked</Badge> : null}
+    </span>
+  );
   const columns: Array<Column<UserRow>> = [
     {
       key: 'user',
       header: 'User',
       cell: (u) => (
-        <div className="min-w-[11rem]">
-          <div className="flex items-center gap-1.5">
+        <div className="min-w-[9rem] sm:min-w-[11rem]">
+          <div className="flex flex-wrap items-center gap-1.5">
             <span className="font-medium text-ink">{u.name}</span>
             {u.id === me?.id ? <Badge tone="accent">You</Badge> : null}
           </div>
-          <div className="text-[11.5px] text-ink-3">{u.email}</div>
+          <div className="text-[11.5px] break-all text-ink-3">{u.email}</div>
+          {/* phones: role and status fold into this cell */}
+          <div className="mt-0.5 text-[11.5px] text-ink-2 sm:hidden">{u.role_name}</div>
+          <div className="mt-1 sm:hidden">{statusBadges(u)}</div>
         </div>
       ),
     },
-    { key: 'role', header: 'Role', cell: (u) => <Badge tone={u.role === 'admin' ? 'accent' : 'neutral'}>{u.role_name}</Badge> },
-    {
-      key: 'status',
-      header: 'Status',
-      cell: (u) => (
-        <span className="flex flex-wrap gap-1">
-          <Badge tone={u.is_active ? 'good' : 'outline'}>{u.is_active ? 'Active' : 'Inactive'}</Badge>
-          {u.must_change_password ? <Badge tone="warn">Must change password</Badge> : null}
-          {u.uses_default_password ? <Badge tone="demo">Demo password</Badge> : null}
-          {u.locked ? <Badge tone="crit">Locked</Badge> : null}
-        </span>
-      ),
-    },
+    { key: 'role', header: 'Role', hideBelow: 'sm', cell: (u) => <Badge tone={u.role === 'admin' ? 'accent' : 'neutral'}>{u.role_name}</Badge> },
+    { key: 'status', header: 'Status', hideBelow: 'sm', cell: (u) => statusBadges(u) },
     { key: 'last', header: 'Last sign-in', hideBelow: 'md', nowrap: true, cell: (u) => (u.last_login_at ? <MarketTime iso={u.last_login_at} relative /> : <span className="text-ink-4">Never</span>) },
     { key: 'sessions', header: 'Sessions', align: 'right', hideBelow: 'lg', cell: (u) => fmtNumber(u.active_sessions) },
     { key: 'created', header: 'Added', hideBelow: 'xl', nowrap: true, cell: (u) => <span className="text-ink-3">{fmtRelative(u.created_at)}</span> },

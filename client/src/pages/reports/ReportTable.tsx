@@ -12,6 +12,7 @@ import { Badge, cn } from '@/components/ui/primitives.tsx';
 import { IndexScale } from '@/components/charts/charts.tsx';
 import { AVAILABILITY_LABELS, type Availability } from '@shared/constants.ts';
 import type { ReportColumn, ReportTable } from '@shared/api/reports.ts';
+import { DEMO_SUFFIX, planTextColumns } from './table-layout.ts';
 
 type Row = ReportTable['rows'][number];
 
@@ -40,8 +41,6 @@ function SignedPct({ value }: { value: number }) {
     </span>
   );
 }
-
-const DEMO_SUFFIX = /\s*(?:\(DEMO\)|·\s*DEMO)$/;
 
 /** Text values that end in a DEMO marker get the same hatched stamp used everywhere else. */
 function TextValue({ text }: { text: string }) {
@@ -125,38 +124,22 @@ interface Layout {
 }
 
 function layoutOf(table: ReportTable): Layout {
+  const currencyKeys = new Set(table.columns.map((c) => c.currency_key).filter(Boolean));
+  const plan = planTextColumns(table.rows, table.columns.filter((c) => c.type === 'text').map((c) => c.key), table.columns.length);
+  const folded = new Map(plan.constant.map((c) => [c.key, c.value]));
   const constant: Layout['constant'] = [];
   const columns: Layout['columns'] = [];
-  const currencyKeys = new Set(table.columns.map((c) => c.currency_key).filter(Boolean));
   for (const column of table.columns) {
     if (column.type !== 'text') {
       columns.push({ ...column, wrap: false, decimals: column.type === 'number' ? decimalsOf(table, column.key) : undefined });
-      continue;
+    } else if (folded.has(column.key)) {
+      constant.push({ column, value: folded.get(column.key)! });
+    } else {
+      const text = plan.columns.get(column.key);
+      // currency codes are short and never wrap
+      const wrap = !!text?.wrap && !currencyKeys.has(column.key);
+      columns.push({ ...column, wrap, minWidth: wrap ? text?.minWidth : undefined });
     }
-    let longest = 0;
-    let stamped = false;
-    let first: string | null = null;
-    let same = table.rows.length > 1;
-    for (const row of table.rows) {
-      const text = blank(row[column.key]) ? '' : String(row[column.key]);
-      if (first === null) first = text;
-      else if (text !== first) same = false;
-      // a trailing DEMO marker is drawn as a stamp that can drop to its own line
-      const plain = text.replace(DEMO_SUFFIX, '');
-      if (plain.length !== text.length) stamped = true;
-      if (plain.length > longest) longest = plain.length;
-    }
-    // the leading column identifies the row and always stays in the grid
-    if (same && columns.length > 0) {
-      constant.push({ column, value: first ?? '' });
-      continue;
-    }
-    // short labels stay on one line; longer text may wrap, but never into a sliver
-    // In all but the widest tables a DEMO-stamped label stays on one line with its stamp.
-    const roomy = table.columns.length - constant.length <= 11;
-    const wrap = (stamped ? !roomy || longest > 22 : longest > 13) && !currencyKeys.has(column.key);
-    const width = longest > 46 ? 190 : longest > 30 ? 140 : longest > 22 ? 104 : 84;
-    columns.push({ ...column, wrap, minWidth: wrap ? (stamped ? Math.max(width, 96) : width) : undefined });
   }
   return { columns, constant };
 }
@@ -170,6 +153,8 @@ export function ReportTableView({ table, printing, label }: { table: ReportTable
   }, [table]);
 
   const layout = useMemo(() => layoutOf(table), [table]);
+  // a column that is blank in every row has nothing to state above the grid
+  const stated = layout.constant.filter((c) => c.value !== '');
   const textKeys = useMemo(() => new Set(layout.columns.filter((c) => c.type === 'text').map((c) => c.key)), [layout]);
   // a currency stated once above the grid still names the currency of every money cell
   const statedCurrencies = useMemo(() => new Set(layout.constant.map((c) => c.column.key)), [layout]);
@@ -220,15 +205,18 @@ export function ReportTableView({ table, printing, label }: { table: ReportTable
     if (!printing) setScaled(false);
   }, [printing]);
   const overflowing = fit < 1;
+  const paged = total > SCREEN_PAGE;
 
   return (
     <div className="overflow-hidden rounded-[10px] border border-line bg-surface">
-      {layout.constant.length ? (
+      {stated.length ? (
         <div className="flex flex-wrap items-center gap-x-5 gap-y-1 border-b border-line bg-sunken px-3.5 py-2 text-[12px] leading-5" role="note" aria-label="Values that are the same in every row">
-          {layout.constant.map(({ column, value }) => (
+          {stated.map(({ column, value }) => (
             <span key={column.key} className="inline-flex items-center gap-1.5">
               <span className="text-ink-3">{column.label}</span>
-              <span className="font-medium text-ink">{value ? <TextValue text={value} /> : <span className="font-normal text-ink-3">none</span>}</span>
+              <span className="font-medium text-ink">
+                <TextValue text={value} />
+              </span>
             </span>
           ))}
           <span className="text-ink-4">— the same in every row</span>
@@ -290,11 +278,6 @@ export function ReportTableView({ table, printing, label }: { table: ReportTable
           </tbody>
         </table>
       </div>
-      {overflowing && !printing ? (
-        <p className="no-print border-t border-line bg-sunken px-3.5 py-1.5 text-[11.5px] leading-4 text-ink-3">
-          Wider than the page — scroll sideways for the remaining columns. The downloads hold every column and row.
-        </p>
-      ) : null}
       {total === 0 ? <p className="px-4 py-6 text-center text-[12.5px] text-ink-3">No rows — nothing was recorded in this period and selection that belongs in “{label}”.</p> : null}
       {printing ? (
         total > PRINT_ROWS ? (
@@ -302,9 +285,18 @@ export function ReportTableView({ table, printing, label }: { table: ReportTable
             First {fmtNumber(PRINT_ROWS)} of {fmtNumber(total)} rows — the full table is in the Excel and CSV downloads.
           </p>
         ) : null
-      ) : total > SCREEN_PAGE ? (
-        <Pagination page={current} pages={pages} total={total} pageSize={SCREEN_PAGE} onPage={setPage} className="no-print" />
-      ) : null}
+      ) : (
+        <>
+          {paged ? <Pagination page={current} pages={pages} total={total} pageSize={SCREEN_PAGE} onPage={setPage} className="no-print" /> : null}
+          {paged || overflowing ? (
+            <p className="no-print border-t border-line bg-sunken px-3.5 py-1.5 text-[11.5px] leading-4 text-ink-3">
+              {paged ? `Showing ${fmtNumber(shown.length)} of ${fmtNumber(total)} rows. ` : ''}
+              {overflowing ? 'Wider than the page — scroll sideways for the remaining columns. ' : ''}
+              The Excel and CSV downloads hold the full table.
+            </p>
+          ) : null}
+        </>
+      )}
       {table.note ? <p className="border-t border-line px-4 py-2 text-[12px] leading-5 text-ink-3">{table.note}</p> : null}
     </div>
   );

@@ -10,7 +10,7 @@ import { idList } from '../lib/http.ts';
 import { addDays, isIsoDate, nowIso } from '../lib/time.ts';
 import type { Conversion, DateRange, DemoNote } from '../../shared/api/analytics.ts';
 import type { ReportColumn, ReportDefinition, ReportResult, ReportRun, ReportSection, ReportTable, ReportType } from '../../shared/api/reports.ts';
-import { DATA_CLASS_LABELS, PROMO_TYPE_LABELS, type DataClass, type PromoType } from '../../shared/constants.ts';
+import { AVAILABILITY_LABELS, DATA_CLASS_LABELS, PROMO_TYPE_LABELS, type Availability, type DataClass, type PromoType } from '../../shared/constants.ts';
 import { csvCell, toCsv } from '../lib/tabular.ts';
 import { buildXlsx, provenanceSheet, type ColumnSpec, type SheetSpec } from './export.ts';
 import { getSetting } from './core.ts';
@@ -631,7 +631,7 @@ function productReport(ctx: AppContext, params: ReportParams): Built {
         ],
         rows: snapshot.map((r) => ({
           retailer: r.retailer_name, market: r.market_name, variant: r.variant_name ?? packLabel(r), currency: r.currency_code, price: r.current_price, regular: r.regular_price, discount: r.is_promo ? r.discount_pct : null,
-          unit_price: round(r.unit_price, 4), availability: r.availability, observed: r.observed_at, fresh: r.observed_at ? (r.is_stale ? 'Stale' : 'Fresh') : 'Never observed',
+          unit_price: round(r.unit_price, 4), availability: r.availability ? (AVAILABILITY_LABELS[r.availability as Availability] ?? r.availability) : null, observed: r.observed_at, fresh: r.observed_at ? (r.is_stale ? 'Stale' : 'Fresh') : 'Never observed',
           source: r.data_class ? (DATA_CLASS_LABELS[r.data_class as DataClass] ?? r.data_class) + (r.is_demo ? ' (DEMO)' : '') : '',
         })),
       },
@@ -854,10 +854,21 @@ export function generateReport(ctx: AppContext, type: ReportType, params: Report
     if (params.category_ids?.length) stored.category_id = params.category_ids.join(',');
     if (params.product_id) stored.product_id = String(params.product_id);
     if (def.params.includes('currency')) stored.currency = params.currency;
-    runId = ctx.db.run(`INSERT INTO report_runs (type, title, params, row_count, generated_by, generated_at) VALUES (?, ?, ?, ?, ?, ?)`, [
-      type, `${def.title} — ${built.subtitle}`.slice(0, 300), JSON.stringify(stored), rowCount, user.id, generatedAt,
-    ]).lastInsertRowid;
-    ctx.db.run(`DELETE FROM report_runs WHERE id NOT IN (SELECT id FROM report_runs ORDER BY id DESC LIMIT 200)`);
+    // Re-opening a bookmarked report regenerates it; the same person asking for the same report again within a
+    // short while is one run, not a new entry each time.
+    const recent = ctx.db.get<{ id: number }>(
+      `SELECT id FROM report_runs WHERE type = ? AND params = ? AND generated_by = ? AND generated_at >= ? ORDER BY id DESC LIMIT 1`,
+      [type, JSON.stringify(stored), user.id, new Date(Date.now() - 15 * 60_000).toISOString()],
+    );
+    if (recent) {
+      runId = recent.id;
+      ctx.db.run('UPDATE report_runs SET row_count = ?, generated_at = ? WHERE id = ?', [rowCount, generatedAt, recent.id]);
+    } else {
+      runId = ctx.db.run(`INSERT INTO report_runs (type, title, params, row_count, generated_by, generated_at) VALUES (?, ?, ?, ?, ?, ?)`, [
+        type, `${def.title} — ${built.subtitle}`.slice(0, 300), JSON.stringify(stored), rowCount, user.id, generatedAt,
+      ]).lastInsertRowid;
+      ctx.db.run(`DELETE FROM report_runs WHERE id NOT IN (SELECT id FROM report_runs ORDER BY id DESC LIMIT 200)`);
+    }
   }
   return {
     type,

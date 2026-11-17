@@ -82,7 +82,7 @@ retailer names with **fictional prices**. It exists to show how the product work
   exports, alerts and assistant answers. Demo listing links point at `demo.invalid`.
 - Demo "collection" is produced by a simulated source. Its runs are shown as *simulated* and are **never counted as
   real collection**: success rates, "last successful collection" and source health keep real and simulated apart.
-- Remove it in **Administration → Database** or with `npm run db:purge-demo`. Only demo records are removed; anything
+- Remove it in **Administration → Database (Excel)** or with `npm run db:purge-demo`. Only demo records are removed; anything
   you entered, imported or collected stays. `npm run db:seed-demo` loads it again.
 - Start without it: `PIOS_SEED_DEMO=false`.
 
@@ -100,7 +100,7 @@ columns, review the row-by-row validation, then commit. Rows keep their original
 history*, and the file is kept as evidence. Templates can be downloaded on the same screen. Products can be
 imported the same way from the Product Catalogue.
 
-**3. Automated sources** — configured per retailer in *Administration → Retailers*, scheduled every 6 hours, 12
+**3. Automated sources** — configured per retailer in *Administration → Retailers & listings*, scheduled every 6 hours, 12
 hours, daily, weekly, or run manually. Nothing is pre-connected: a source shows **Not configured** until it has
 what it needs, and **Failing** when a run did not succeed.
 
@@ -133,7 +133,7 @@ You remain responsible for having the right to collect from each source.
 The system of record is a relational database (Excel cannot guarantee that history is never overwritten, nor take
 writes from scheduled collection). On top of it:
 
-- **Download everything as one workbook** — *Administration → Database → Download Excel workbook*, or
+- **Download everything as one workbook** — *Administration → Database (Excel)*, or
   `npm run db:export-excel`. One sheet per entity (price observations, products, retailers, listings, promotions,
   price changes, exchange rates, alerts, …) plus a README sheet and a data dictionary.
 - **An always-current Excel copy on disk** — `<data dir>/exports/price-intelligence-database.xlsx`, rewritten

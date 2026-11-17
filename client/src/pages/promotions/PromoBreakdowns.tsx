@@ -5,8 +5,8 @@ import { OwnershipDot, PromoBadge, ProductCell, packText } from '@/components/do
 import { DataTable, type Column } from '@/components/ui/data-table.tsx';
 import { Card, CardHeader, EmptyState, Select, cn } from '@/components/ui/primitives.tsx';
 import { DASH, fmtNumber, fmtPct } from '@/lib/format.ts';
-import { useIsNarrow } from '@/lib/hooks.ts';
 import type { PromoBreakdown, PromotionRecord } from '@shared/api/analytics.ts';
+import { useCardWidth } from './layout.ts';
 import { promoTypeColor, promoTypeLabel, typeRank } from './promo-meta.ts';
 import { PromoStatus } from './PromoStatus.tsx';
 
@@ -165,7 +165,10 @@ export const BreakdownTable = memo(function BreakdownTable({
   maxHeight?: number;
 }) {
   const [sort, setSort] = useState('-episodes');
-  const narrow = useIsNarrow(639);
+  // By the width of the card itself: the seven columns need about 920px (their sortable headers set the
+  // width); in a narrower card each row becomes a stacked entry, so no column hides behind a sideways scroll.
+  const [cardRef, cardWidth] = useCardWidth();
+  const layout = cardWidth >= 930 ? 'table' : 'list';
   const sorted = useMemo(() => sortRows(rows, sort), [rows, sort]);
   const topShare = Math.max(1, ...rows.map((r) => r.promo_day_share_pct ?? 0));
   const columns: Array<Column<PromoBreakdown>> = [
@@ -183,8 +186,8 @@ export const BreakdownTable = memo(function BreakdownTable({
     { key: 'episodes', header: 'Promotions', align: 'right', sortKey: 'episodes', cell: (r) => fmtNumber(r.episodes) },
     { key: 'current', header: 'Running', align: 'right', sortKey: 'current', cell: (r) => fmtNumber(r.current) },
     { key: 'avg', header: 'Avg discount', align: 'right', sortKey: 'avg', cell: (r) => fmtPct(r.avg_discount_pct, 1) },
-    { key: 'max', header: 'Highest', align: 'right', sortKey: 'max', hideBelow: 'sm', cell: (r) => fmtPct(r.max_discount_pct, 1) },
-    { key: 'duration', header: 'Avg days', align: 'right', sortKey: 'duration', hideBelow: 'sm', headerTitle: 'Average promotion duration in days', cell: (r) => dayCount(r.avg_duration_days) },
+    { key: 'max', header: 'Highest', align: 'right', sortKey: 'max', cell: (r) => fmtPct(r.max_discount_pct, 1) },
+    { key: 'duration', header: 'Avg days', align: 'right', sortKey: 'duration', headerTitle: 'Average promotion duration in days', cell: (r) => dayCount(r.avg_duration_days) },
     {
       key: 'share',
       header: 'Promo-day share',
@@ -193,7 +196,7 @@ export const BreakdownTable = memo(function BreakdownTable({
       headerTitle: 'Share of observed listing-days on promotion in the period',
       cell: (r) => (
         <span className="inline-flex items-center justify-end gap-2.5">
-          <span className="hidden h-1.5 w-24 rounded-full bg-wash md:inline-block" aria-hidden>
+          <span className="inline-block h-1.5 w-24 rounded-full bg-wash" aria-hidden>
             <span className="block h-1.5 rounded-r-full bg-s1" style={{ width: `${Math.max(0, Math.min(100, ((r.promo_day_share_pct ?? 0) / topShare) * 100))}%` }} />
           </span>
           <span className="inline-block w-12">{fmtPct(r.promo_day_share_pct, 1)}</span>
@@ -201,62 +204,58 @@ export const BreakdownTable = memo(function BreakdownTable({
       ),
     },
   ];
-  if (narrow) {
-    return (
-      <Card className={cn(refetching && 'opacity-60 transition-opacity')}>
+  const empty = <EmptyState title="No promotions in this selection" description="Widen the date range or relax the filters." className="py-8" />;
+  return (
+    <div ref={cardRef} className="min-w-0">
+      <Card>
         <CardHeader title={title} subtitle={subtitle} />
-        <label className="flex items-center gap-2 border-b border-line px-4 py-2.5 text-[12.5px] text-ink-3">
-          Sort by
-          <Select className="w-auto" value={sort} onChange={(e) => setSort(e.target.value)} aria-label={`Sort ${firstColumn.toLowerCase()}s by`}>
-            <option value="-episodes">Most promotions</option>
-            <option value="-current">Most running now</option>
-            <option value="-avg">Highest average discount</option>
-            <option value="-max">Deepest discount</option>
-            <option value="-share">Highest promo-day share</option>
-            <option value="label">Name</option>
-          </Select>
-        </label>
-        {sorted.length === 0 ? (
-          <EmptyState title="No promotions in this selection" description="Widen the date range or relax the filters." className="py-8" />
+        {layout === 'list' ? (
+          <div className={cn('transition-opacity', refetching && 'opacity-60')}>
+            <div className="flex border-b border-line px-4 py-2.5">
+              <label className="flex shrink-0 items-center gap-2 text-[12.5px] whitespace-nowrap text-ink-3">
+                Sort by
+                <Select value={sort} onChange={(e) => setSort(e.target.value)} aria-label={`Sort ${firstColumn.toLowerCase()}s by`}>
+                  <option value="-episodes">Most promotions</option>
+                  <option value="-current">Most running now</option>
+                  <option value="-avg">Highest average discount</option>
+                  <option value="-max">Deepest discount</option>
+                  <option value="-duration">Longest average duration</option>
+                  <option value="-share">Highest promo-day share</option>
+                  <option value="label">Name</option>
+                </Select>
+              </label>
+            </div>
+            {sorted.length === 0 ? (
+              empty
+            ) : (
+              <ul className="divide-y divide-line overflow-y-auto" style={{ maxHeight }}>
+                {sorted.map((r) => (
+                  <li key={r.key} className="px-4 py-2.5">
+                    <div className="flex items-baseline justify-between gap-3 text-[13px] leading-5">
+                      <span className="flex min-w-0 items-center gap-2 font-medium text-ink">
+                        {showOwnership ? <OwnershipDot ownership={r.ownership ?? null} /> : null}
+                        <span className="truncate">{r.label}</span>
+                      </span>
+                      <span className="num shrink-0 font-semibold text-ink">
+                        {fmtNumber(r.episodes)} <span className="font-normal text-ink-3">promotions</span>
+                      </span>
+                    </div>
+                    <p className="num mt-0.5 text-[12px] leading-4 text-ink-3">
+                      {fmtNumber(r.current)} running ·{' '}
+                      {r.avg_discount_pct === null ? 'no stated price reduction' : `average ${fmtPct(r.avg_discount_pct, 1)} off, highest ${fmtPct(r.max_discount_pct, 1)}`}
+                      {r.avg_duration_days === null ? '' : ` · ${dayCount(r.avg_duration_days)} days on average`}
+                      {r.promo_day_share_pct === null ? '' : ` · on promotion ${fmtPct(r.promo_day_share_pct, 1)} of observed listing-days`}
+                    </p>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
         ) : (
-          <ul className="max-h-[26rem] divide-y divide-line overflow-y-auto">
-            {sorted.map((r) => (
-              <li key={r.key} className="px-4 py-2.5">
-                <div className="flex items-baseline justify-between gap-3 text-[13px] leading-5">
-                  <span className="flex min-w-0 items-center gap-2 font-medium text-ink">
-                    {showOwnership ? <OwnershipDot ownership={r.ownership ?? null} /> : null}
-                    <span className="truncate">{r.label}</span>
-                  </span>
-                  <span className="num shrink-0 font-semibold text-ink">
-                    {fmtNumber(r.episodes)} <span className="font-normal text-ink-3">promotions</span>
-                  </span>
-                </div>
-                <p className="num mt-0.5 text-[12px] leading-4 text-ink-3">
-                  {fmtNumber(r.current)} running · average {fmtPct(r.avg_discount_pct, 1)}, highest {fmtPct(r.max_discount_pct, 1)} · {dayCount(r.avg_duration_days)} days · on promotion{' '}
-                  {fmtPct(r.promo_day_share_pct, 1)} of observed listing-days
-                </p>
-              </li>
-            ))}
-          </ul>
+          <DataTable columns={columns} rows={sorted} rowKey={(r) => r.key} sort={sort} onSort={setSort} dense refetching={refetching} maxHeight={maxHeight} empty={empty} />
         )}
       </Card>
-    );
-  }
-  return (
-    <Card>
-      <CardHeader title={title} subtitle={subtitle} />
-      <DataTable
-        columns={columns}
-        rows={sorted}
-        rowKey={(r) => r.key}
-        sort={sort}
-        onSort={setSort}
-        dense
-        refetching={refetching}
-        maxHeight={maxHeight}
-        empty={<EmptyState title="No promotions in this selection" description="Widen the date range or relax the filters." className="py-8" />}
-      />
-    </Card>
+    </div>
   );
 });
 

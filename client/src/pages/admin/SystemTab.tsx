@@ -64,7 +64,9 @@ export function SystemTab() {
                   <th scope="col" style={{ textAlign: 'right' }}>
                     Observations
                   </th>
-                  <th scope="col">Last observed</th>
+                  <th scope="col" className="hidden sm:table-cell">
+                    Last observed
+                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -79,7 +81,7 @@ export function SystemTab() {
                     <td className="num" style={{ textAlign: 'right' }}>
                       {fmtNumber(row.count)}
                     </td>
-                    <td>
+                    <td className="hidden sm:table-cell">
                       <MarketTime iso={row.last_observed_at} />
                     </td>
                   </tr>

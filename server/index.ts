@@ -38,6 +38,20 @@ let scheduler: { stop: () => Promise<void> | void } | null = null;
 if (ctx.config.schedulerEnabled) {
   const { startScheduler } = await import('./services/collection/scheduler.ts');
   scheduler = startScheduler(ctx);
+} else {
+  // PIOS_SCHEDULER=off stops scheduled collection only. Housekeeping that contacts no retailer keeps running:
+  // the Excel copy of the database, stale-data and failing-source alerts, exchange-rate refresh.
+  const { fireHook } = await import('./context.ts');
+  const timer = setInterval(() => fireHook(ctx, ctx.hooks.schedulerTick, new Date()), 60_000);
+  timer.unref();
+  scheduler = { stop: () => clearInterval(timer) };
+  console.log('[setup] scheduled collection is off (PIOS_SCHEDULER=off); sources run only when started manually');
+}
+try {
+  const { markMirrorAutoRefresh } = await import('./services/database-export.ts');
+  markMirrorAutoRefresh(ctx, true);
+} catch {
+  /* the Excel mirror module is optional in a slim build */
 }
 
 await app.listen({ port: ctx.config.port, host: ctx.config.host });

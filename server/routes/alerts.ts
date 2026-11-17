@@ -5,9 +5,9 @@ import { placeholders, type SqlParam } from '../db/sqlite.ts';
 import { AppError, badRequest, conflict, notFound, unprocessable } from '../lib/errors.ts';
 import { idList, idParam, likePattern, optBool, orderBy, paged, pagination, parse, strList } from '../lib/http.ts';
 import { addDays, isIsoDate, nowIso, todayUtc } from '../lib/time.ts';
-import { audit } from '../services/core.ts';
+import { audit, getSetting } from '../services/core.ts';
 import { ensureDefaultAlertRules, registerAlertEngine, resolveStateAlertsOfRule, runStateChecks } from '../services/alerts.ts';
-import { flushNotifications, parseChannels, parsePrefs, SEVERITY_RANK } from '../services/notifications.ts';
+import { flushNotifications, parseChannels, parsePrefs, SEVERITY_RANK, smtpStatus } from '../services/notifications.ts';
 import { ALERT_TYPE_INFO, ALERT_TYPES, SEVERITIES, type AlertType, type Severity } from '../../shared/constants.ts';
 import type {
   AlertBulkResult,
@@ -19,6 +19,7 @@ import type {
   AlertSummary,
   AlertUnreadCount,
   NotificationChannel,
+  NotificationChannels,
   NotificationPrefs,
 } from '../../shared/api/alerts.ts';
 
@@ -501,6 +502,13 @@ export default async function alertRoutes(app: FastifyInstance) {
   });
 
   // ---- personal notification preferences ----------------------------------------------------
+  /** Which delivery channels are set up — readiness only, no addresses or hosts — so every user can see what "e-mail" will do. */
+  app.get('/me/notification-channels', async (): Promise<NotificationChannels> => ({
+    in_app: true,
+    email: smtpStatus(ctx).configured,
+    webhook: !!getSetting(ctx, 'alert_webhook_url'),
+  }));
+
   app.get('/me/notification-prefs', async (req): Promise<NotificationPrefs> => {
     const row = ctx.db.get<{ notification_prefs: string }>('SELECT notification_prefs FROM users WHERE id = ?', [req.user!.id]);
     return parsePrefs(row?.notification_prefs);

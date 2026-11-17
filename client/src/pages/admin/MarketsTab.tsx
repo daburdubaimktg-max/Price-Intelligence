@@ -205,7 +205,7 @@ export function MarketsTab() {
       key: 'name',
       header: 'Market',
       cell: (m) => (
-        <div className="min-w-[8rem]">
+        <div className="min-w-[6.5rem] sm:min-w-[8rem]">
           <span className="font-medium text-ink">{m.name}</span> <span className="mono text-ink-3">{m.code}</span>
           <div className="text-[11.5px] text-ink-3">{[m.country_name !== m.name ? m.country_name : null, m.region].filter(Boolean).join(' · ') || '—'}</div>
         </div>

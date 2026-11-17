@@ -25,7 +25,8 @@ export const TEST_PASSWORD = 'Test-Password-2026';
 export async function createTestApp(): Promise<TestApp> {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pios-test-'));
   process.env.LOG_LEVEL = 'silent';
-  const { app, ctx } = await buildApp({ dataDir, schedulerEnabled: false, seedDemo: false, allowPrivateNetwork: true, logLevel: 'silent' });
+  // rate limits are exercised on their own in security.test.ts; elsewhere they would only throttle the suite
+  const { app, ctx } = await buildApp({ dataDir, schedulerEnabled: false, seedDemo: false, allowPrivateNetwork: true, logLevel: 'silent', rateLimits: false });
   ensureReferenceData(ctx);
   const tokens = {} as Record<RoleKey, string>;
   for (const role of ['admin', 'analyst', 'viewer'] as RoleKey[]) {

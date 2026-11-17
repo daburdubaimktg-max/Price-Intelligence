@@ -8,7 +8,7 @@ import { Link } from 'react-router';
 import { CircleCheck, CircleX, Download, FileClock, FileSpreadsheet, FileUp, FlaskConical, Keyboard, PackagePlus, TriangleAlert, Undo2, type LucideIcon } from 'lucide-react';
 import { apiPost, download, type Paged } from '@/lib/api.ts';
 import { useCan } from '@/lib/auth.tsx';
-import { DASH, fmtBytes, fmtDate, fmtNumber } from '@/lib/format.ts';
+import { DASH, fmtBytes, fmtDate, fmtNumber, plural } from '@/lib/format.ts';
 import { useApiQuery } from '@/lib/hooks.ts';
 import { ConfirmDialog, Drawer, useToast } from '@/components/ui/overlays.tsx';
 import { Badge, Button, Card, CardHeader, DescriptionList, EmptyState, ErrorState, Field, LoadingBlock, Notice, Segmented, Textarea, type BadgeTone } from '@/components/ui/primitives.tsx';
@@ -186,8 +186,8 @@ function ImportDrawer({ batchId, onClose }: { batchId: number | null; onClose: (
               {data.summary?.date_from || data.summary?.date_to ? (
                 <p className="mt-2 text-[12px] leading-4 text-ink-3">
                   Observation dates in the file: {fmtDate(data.summary.date_from)} – {fmtDate(data.summary.date_to)}
-                  {data.summary.listings ? ` · ${fmtNumber(data.summary.listings)} listings` : ''}
-                  {data.summary.retailers ? ` · ${fmtNumber(data.summary.retailers)} retailers` : ''}
+                  {data.summary.listings ? ` · ${plural(data.summary.listings, 'listing')}` : ''}
+                  {data.summary.retailers ? ` · ${plural(data.summary.retailers, 'retailer')}` : ''}
                 </p>
               ) : null}
               {batch.kind === 'observations' && (batch.status === 'committed' || batch.status === 'voided') ? (
@@ -291,11 +291,21 @@ function ImportDrawer({ batchId, onClose }: { batchId: number | null; onClose: (
         }}
       >
         <p>
-          The {fmtNumber(batch?.inserted_count ?? 0)} observations of <strong className="font-semibold text-ink">{batch?.file_name}</strong> will be marked void. They stay in the ledger — nothing is ever deleted — but
-          every chart, comparison, alert and report stops using them. Observations this import had replaced are restored.
+          {batch?.inserted_count === 1 ? 'The observation' : `The ${fmtNumber(batch?.inserted_count ?? 0)} observations`} of <strong className="font-semibold text-ink">{batch?.file_name}</strong> will be marked void.
+          Nothing is deleted — the ledger keeps every row — but charts, comparisons, alerts and reports stop using them. Observations this import had replaced are restored.
         </p>
         <Field label="Reason (kept in the audit log)" required error={reasonError} className="mt-3">
-          <Textarea value={reason} onChange={(e) => setReason(e.target.value)} rows={2} maxLength={500} placeholder="e.g. Wrong month was uploaded" invalid={!!reasonError} />
+          <Textarea
+            value={reason}
+            onChange={(e) => {
+              setReason(e.target.value);
+              if (reasonError) setReasonError(null);
+            }}
+            rows={2}
+            maxLength={500}
+            placeholder="e.g. Wrong month was uploaded"
+            invalid={!!reasonError}
+          />
         </Field>
       </ConfirmDialog>
     </>
@@ -365,7 +375,7 @@ export function ImportsTab() {
       key: 'file',
       header: 'File',
       cell: (b) => (
-        <div className="max-w-[24rem] min-w-[11rem]">
+        <div className="max-w-[11rem] min-w-[9rem] sm:max-w-[24rem] sm:min-w-[11rem]">
           <div className="flex items-center gap-1.5">
             <span className="truncate font-medium text-ink" title={b.file_name}>
               {b.file_name}

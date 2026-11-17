@@ -161,6 +161,74 @@ describe('answers from stored observations', () => {
   });
 });
 
+describe('precision of answers', () => {
+  it('answers for the retailer that was named in full, not for others sharing part of its name', async () => {
+    const now = new Date().toISOString();
+    const retailer = t.ctx.db.run(
+      `INSERT INTO retailers (name, website, country_code, market_id, currency_code, collection_method, collection_frequency, created_at, updated_at)
+       VALUES ('Test Mart Online', 'https://online.testmart.example', 'AE', ?, 'AED', 'manual', 'daily', ?, ?)`,
+      [fx.marketId, now, now],
+    ).lastInsertRowid;
+    const listing = t.ctx.db.run(
+      `INSERT INTO retailer_listings (retailer_id, product_id, external_id, url, title, match_status, created_at, updated_at)
+       VALUES (?, ?, 'own-oil-online', 'https://online.testmart.example/p/own-oil', 'Sunrise Amla online', 'matched', ?, ?)`,
+      [retailer, fx.ownProductId, now, now],
+    ).lastInsertRowid;
+    const { ingestObservations } = await import('../server/services/ingestion.ts');
+    ingestObservations(t.ctx, [{ listing_id: listing, observed_at: known.at(1), current_price: 99, regular_price: 99, availability: 'in_stock' }], { sourceMethod: 'manual', userId: 1 });
+
+    const exact = await ask(`What was the price of ${PRODUCT} at Test Mart last week?`);
+    assert.deepEqual(exact.evidence!.retailers, ['Test Mart']);
+    assert.equal(exact.evidence!.observations, 4);
+    assert.doesNotMatch(exact.answer, /99\.00/);
+
+    const online = await ask(`What was the price of ${PRODUCT} at Test Mart Online last week?`);
+    assert.deepEqual(online.evidence!.retailers, ['Test Mart Online']);
+    assert.match(online.answer, /AED 99\.00/);
+  });
+
+  it('shows prices with the precision of their currency', async () => {
+    const kw = createFixture(t.ctx, { marketCode: 'KW', retailerName: 'Kuwait Mart' });
+    t.ctx.db.run(`UPDATE products SET name = 'Meadow Hair Cream 140ml' WHERE id = ?`, [kw.ownProductId]);
+    const { ingestObservations } = await import('../server/services/ingestion.ts');
+    const res = ingestObservations(
+      t.ctx,
+      [
+        { listing_id: kw.ownListingId, observed_at: known.at(3), current_price: 1.325, regular_price: 1.325, availability: 'in_stock' },
+        { listing_id: kw.ownListingId, observed_at: known.at(1), current_price: 0.975, regular_price: 1.325, availability: 'in_stock' },
+      ],
+      { sourceMethod: 'manual', userId: 1 },
+    );
+    assert.equal(res.inserted, 2);
+    const lowest = await ask('Which retailer currently has the lowest price for Meadow Hair Cream 140ml?');
+    assert.match(lowest.answer, /KWD 0\.975/);
+    const row = lowest.tables[0]!.rows[0]!;
+    assert.equal(row.price, 'KWD 0.975');
+    assert.equal(row.regular, '1.325', 'three decimals are kept, not rounded to 1.33');
+    const history = await ask('Show the price history of Meadow Hair Cream 140ml over the last 7 days');
+    const stats = history.tables[0]!.rows[0]!;
+    assert.equal(stats.first, '1.325');
+    assert.equal(stats.last, '0.975');
+    assert.equal(stats.min, '0.975');
+  });
+
+  it('treats a named product that is not in the catalogue as unknown instead of ignoring it', async () => {
+    for (const question of ['How much does Nivea Creme cost in UAE?', 'What does Nivea Creme cost?', 'Show the price history of Nivea Creme 150ml']) {
+      const answer = await ask(question);
+      assert.equal(answer.status, 'needs_clarification', question);
+      assert.match(answer.answer, /could not find a product matching "Nivea Creme/);
+      assertNoFigures(answer);
+    }
+  });
+
+  it('never repeats an evidence link', async () => {
+    for (const question of ['Which products have experienced the highest price volatility?', `What was the price of ${PRODUCT} at Test Mart last week?`]) {
+      const hrefs = (await ask(question)).evidence!.links.map((l) => l.href);
+      assert.equal(new Set(hrefs).size, hrefs.length, question);
+    }
+  });
+});
+
 describe('unavailable data', () => {
   it('says the data is unavailable for a retailer that is not monitored', async () => {
     const answer = await ask(`What was the price of ${PRODUCT} at Tesco last week?`);

@@ -36,8 +36,8 @@ export function SourcesTab({ onTest }: { onTest: (retailerId: number) => void })
       key: 'source',
       header: 'Source',
       cell: (s) => (
-        <div className="min-w-[10rem]">
-          <div className="flex items-center gap-1.5">
+        <div className="min-w-[7.5rem] sm:min-w-[10rem]">
+          <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
             <span className="font-medium text-ink">{s.name}</span>
             {s.is_demo ? <DemoBadge /> : null}
           </div>
@@ -53,7 +53,7 @@ export function SourcesTab({ onTest }: { onTest: (retailerId: number) => void })
       key: 'status',
       header: 'Status',
       cell: (s) => (
-        <div className="max-w-[28rem] min-w-[8.5rem] lg:min-w-[15rem]">
+        <div className="max-w-[28rem] sm:min-w-[8.5rem] lg:min-w-[15rem]">
           <SourceStatusBadge status={s.status} />
           <p className="mt-1 hidden text-[11.5px] leading-4 text-ink-3 sm:line-clamp-2" title={s.status_reason}>
             {s.status_reason}
@@ -119,6 +119,7 @@ export function SourcesTab({ onTest }: { onTest: (retailerId: number) => void })
       key: 'listings',
       header: 'Listings',
       align: 'right',
+      hideBelow: 'sm',
       headerTitle: 'Active listings at this retailer',
       cell: (s) => (
         <span>
@@ -146,7 +147,7 @@ export function SourcesTab({ onTest }: { onTest: (retailerId: number) => void })
                 onSelect: () => void actions.run(s),
               },
               { label: 'Test connection', icon: PlugZap, hidden: !actions.canManage || !s.runnable, onSelect: () => onTest(s.retailer_id) },
-              { label: 'Configure in Administration', icon: Settings2, onSelect: () => navigate(`/admin?tab=retailers&retailer=${s.retailer_id}`) },
+              { label: actions.canManage ? 'Configure in Administration' : 'View in Administration', icon: Settings2, onSelect: () => navigate(`/admin?tab=retailers&retailer=${s.retailer_id}`) },
               {
                 label: 'Jobs of this source',
                 icon: ListChecks,
@@ -192,7 +193,7 @@ export function SourcesTab({ onTest }: { onTest: (retailerId: number) => void })
         <SearchInput value={state.s_q ?? ''} onChange={(next) => set({ s_q: next || undefined })} placeholder="Search source or website…" />
       </FilterBar>
 
-      {schedulerOff ? (
+      {schedulerOff && (sources.data?.rows.some((s) => s.runnable) ?? false) ? (
         <Notice tone="warn" icon={TimerOff} className="mb-4" title="Automatic scheduling is switched off on this server">
           Nothing runs by itself: “Next run” shows when a source becomes due. Start a source with Run now, or everything that is due with “Run due sources now”.
         </Notice>

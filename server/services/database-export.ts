@@ -928,12 +928,20 @@ function fingerprint(ctx: AppContext): string {
   return Object.values(row ?? {}).join('|');
 }
 
+const housekeepingActive = new WeakSet<AppContext>();
+/** Called by the server once its periodic housekeeping (which refreshes the mirror) is running. */
+export function markMirrorAutoRefresh(ctx: AppContext, active: boolean): void {
+  if (active) housekeepingActive.add(ctx);
+  else housekeepingActive.delete(ctx);
+}
+
 export function getMirrorStatus(ctx: AppContext): DatabaseMirrorStatus {
   const state = readState(ctx);
   const file = mirrorPath(ctx);
   const exists = fs.existsSync(file);
   return {
     enabled: mirrorEnabled(),
+    auto_refresh: mirrorEnabled() && housekeepingActive.has(ctx),
     path: file,
     exists,
     generated_at: exists ? state.generated_at : null,

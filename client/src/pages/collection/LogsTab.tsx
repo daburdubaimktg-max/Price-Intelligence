@@ -28,8 +28,22 @@ export function LogsTab() {
   const today = dates.data?.today ?? new Date().toISOString().slice(0, 10);
 
   const columns: Array<Column<CollectionLog>> = [
-    { key: 'time', header: 'Time', width: '8.5rem', headerTitle: 'In your own time zone; hover for UTC', cell: (l) => <ViewerTime iso={l.created_at} /> },
-    { key: 'level', header: 'Level', width: '6rem', cell: (l) => <LogLevel level={l.level} /> },
+    {
+      key: 'time',
+      header: 'Time',
+      width: '8.5rem',
+      headerTitle: 'In your own time zone; hover for UTC',
+      cell: (l) => (
+        <div>
+          <ViewerTime iso={l.created_at} />
+          {/* on phones the level sits under the time so the message keeps the width */}
+          <div className="mt-0.5 sm:hidden">
+            <LogLevel level={l.level} />
+          </div>
+        </div>
+      ),
+    },
+    { key: 'level', header: 'Level', width: '6rem', hideBelow: 'sm', cell: (l) => <LogLevel level={l.level} /> },
     {
       key: 'source',
       header: 'Source',
@@ -54,11 +68,17 @@ export function LogsTab() {
       header: 'Message',
       nowrap: false,
       cell: (l) => (
-        <div className="min-w-[14rem]">
+        <div className="min-w-[11rem] sm:min-w-[14rem]">
           <p className="mono leading-5 break-words text-ink-2">{l.message}</p>
           <p className="mono text-ink-4">
             {l.code}
             <span className="md:hidden"> · {l.retailer_name}</span>
+            <span className="sm:hidden">
+              {' · '}
+              <button type="button" className="link" onClick={() => set({ job: String(l.job_id) })}>
+                job #{l.job_id}
+              </button>
+            </span>
           </p>
         </div>
       ),
@@ -68,6 +88,7 @@ export function LogsTab() {
       header: 'Job',
       align: 'right',
       width: '5rem',
+      hideBelow: 'sm',
       cell: (l) => (
         <button
           type="button"

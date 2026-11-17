@@ -98,7 +98,7 @@ function KeyValueEditor({ value, onChange, disabled }: { value: unknown; onChang
   );
 }
 
-function FieldControl({ field, config, onChange, disabled }: { field: ConnectorConfigField; config: ConfigObject; onChange: (next: ConfigObject) => void; disabled?: boolean }) {
+function FieldControl({ field, config, onChange, disabled, id }: { field: ConnectorConfigField; config: ConfigObject; onChange: (next: ConfigObject) => void; disabled?: boolean; /** Set by Field so the label is tied to the control. */ id?: string }) {
   const raw = getPath(config, field.key);
   const set = (value: unknown) => onChange(setPath(config, field.key, value));
   const defaultText = field.default === undefined || field.default === null || typeof field.default === 'object' ? '' : String(field.default);
@@ -117,6 +117,7 @@ function FieldControl({ field, config, onChange, disabled }: { field: ConnectorC
     case 'number':
       return (
         <Input
+          id={id}
           type="number"
           inputMode="decimal"
           step="any"
@@ -129,7 +130,7 @@ function FieldControl({ field, config, onChange, disabled }: { field: ConnectorC
     case 'select': {
       const value = raw === undefined || raw === null ? defaultText : String(raw);
       return (
-        <Select value={value} disabled={disabled} onChange={(e) => set(e.target.value === '' ? undefined : e.target.value)}>
+        <Select id={id} value={value} disabled={disabled} onChange={(e) => set(e.target.value === '' ? undefined : e.target.value)}>
           {!field.required && !defaultText ? <option value="">Not set</option> : null}
           {field.required && !defaultText && !value ? <option value="">Choose…</option> : null}
           {(field.options ?? []).map((o) => (
@@ -141,7 +142,7 @@ function FieldControl({ field, config, onChange, disabled }: { field: ConnectorC
       );
     }
     case 'textarea':
-      return <Textarea value={typeof raw === 'string' ? raw : ''} disabled={disabled} placeholder={placeholder} onChange={(e) => set(e.target.value === '' ? undefined : e.target.value)} />;
+      return <Textarea id={id} value={typeof raw === 'string' ? raw : ''} disabled={disabled} placeholder={placeholder} onChange={(e) => set(e.target.value === '' ? undefined : e.target.value)} />;
     case 'key_value':
       return <KeyValueEditor value={raw} onChange={set} disabled={disabled} />;
     case 'string_list': {
@@ -176,6 +177,7 @@ function FieldControl({ field, config, onChange, disabled }: { field: ConnectorC
       }
       return (
         <Input
+          id={id}
           value={Array.isArray(raw) ? raw.join(', ') : ''}
           disabled={disabled}
           placeholder={field.placeholder ?? 'Separate values with commas'}
@@ -196,6 +198,7 @@ function FieldControl({ field, config, onChange, disabled }: { field: ConnectorC
     default:
       return (
         <Input
+          id={id}
           type={field.type === 'url' ? 'url' : 'text'}
           value={typeof raw === 'string' || typeof raw === 'number' ? String(raw) : ''}
           disabled={disabled}

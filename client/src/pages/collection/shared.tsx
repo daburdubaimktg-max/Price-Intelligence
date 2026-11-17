@@ -37,7 +37,7 @@ export const SOURCE_STATUS_META: Record<SourceStatus, StatusMeta> = {
   healthy: { label: 'Healthy', tone: 'good', icon: CircleCheck, hint: 'A real source: fully configured, and its latest run captured prices.' },
   failing: { label: 'Failing', tone: 'crit', icon: CircleX, hint: 'A real source whose latest run failed. Nothing new is being captured from it.' },
   not_configured: { label: 'Not configured', tone: 'warn', icon: CircleDashed, hint: 'Required configuration is missing. Nothing is collected from this source until it is provided.' },
-  pending: { label: 'No run yet', tone: 'accent', icon: Hourglass, hint: 'Fully configured, but no collection has run yet — nothing has been captured so far.' },
+  pending: { label: 'No run yet', tone: 'accent', icon: Hourglass, hint: 'Fully configured, but no collection run has finished yet.' },
   paused: { label: 'Paused', tone: 'neutral', icon: Pause, hint: 'Scheduled collection is switched off for this source.' },
   manual: { label: 'Manual / import', tone: 'outline', icon: Hand, hint: 'Updated by people — manual price entry or file imports. Nothing is collected automatically.' },
   simulated: { label: 'Simulated demo', tone: 'demo', icon: FlaskConical, hint: 'Generates illustrative DEMO data. It contacts nothing and is not a real integration.' },
@@ -252,9 +252,13 @@ export function CollectionActionsProvider({ children }: { children: ReactNode })
     await client.invalidateQueries({ predicate: (q) => q.queryKey[0] !== 'auth' && q.queryKey[0] !== 'reference' });
   }, [client]);
 
-  /** Polls a job until it finishes (bounded), then returns its final state. */
-  const follow = useCallback(async (job: CollectionJob): Promise<CollectionJob> => {
+  /**
+   * Polls a job until it finishes (bounded), then returns its final state.
+   * `onWaiting` fires once if the job is still in progress after the first look — so a slow run is acknowledged.
+   */
+  const follow = useCallback(async (job: CollectionJob, onWaiting?: () => void): Promise<CollectionJob> => {
     let current = job;
+    let polls = 0;
     const deadline = Date.now() + WATCH_LIMIT_MS;
     while (IN_PROGRESS.includes(current.status) && Date.now() < deadline && mounted.current) {
       await sleep(current.status === 'queued' ? 1500 : 900);
@@ -263,6 +267,8 @@ export function CollectionActionsProvider({ children }: { children: ReactNode })
       } catch {
         break;
       }
+      polls += 1;
+      if (polls === 1 && IN_PROGRESS.includes(current.status)) onWaiting?.();
     }
     return current;
   }, []);
@@ -303,7 +309,9 @@ export function CollectionActionsProvider({ children }: { children: ReactNode })
       try {
         const { job } = await request();
         await refresh();
-        const final = await follow(job);
+        const final = await follow(job, () =>
+          toast.info(`${job.data_class === 'simulated' ? 'Simulated run' : 'Collection'} in progress — ${job.retailer_name}`, `Job #${job.id} is running. Its outcome is reported here when it finishes; you can also follow it on the Jobs tab.`),
+        );
         await refresh();
         if (mounted.current) announce(final);
       } catch (err) {
@@ -362,7 +370,16 @@ export function CollectionActionsProvider({ children }: { children: ReactNode })
         else toast.info('Nothing is due right now', 'No source or retry is scheduled to run at this moment.');
         return;
       }
-      const finished = await Promise.all(result.started.map((job) => follow(job)));
+      let acknowledged = false;
+      const finished = await Promise.all(
+        result.started.map((job) =>
+          follow(job, () => {
+            if (acknowledged) return;
+            acknowledged = true;
+            toast.info(`${result.started.length} due job${result.started.length === 1 ? '' : 's'} started`, 'Still running. The outcome is reported here when they finish; you can also follow them on the Jobs tab.');
+          }),
+        ),
+      );
       await refresh();
       if (!mounted.current) return;
       const describe = (jobs: CollectionJob[]) => {

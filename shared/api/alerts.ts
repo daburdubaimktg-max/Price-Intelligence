@@ -226,6 +226,13 @@ export interface NotificationPrefs {
   min_severity: Severity;
 }
 
+/** GET /me/notification-channels — which delivery channels are set up on this installation (readiness only). */
+export interface NotificationChannels {
+  in_app: boolean;
+  email: boolean;
+  webhook: boolean;
+}
+
 /** POST /alerts/bulk */
 export interface AlertBulkRequest {
   ids: number[];

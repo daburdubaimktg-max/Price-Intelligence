@@ -1457,7 +1457,7 @@ describe('collection health', () => {
       });
       const pending = (await h.api('GET', `/collection/sources?retailer_id=${real.retailerId}`)).body.rows[0];
       assert.equal(pending.status, 'pending');
-      assert.match(pending.status_reason, /no collection has run yet/);
+      assert.match(pending.status_reason, /no collection run has finished yet/);
       let health = (await h.api('GET', '/collection/health')).body;
       assert.equal(health.sources.pending, 1);
       assert.equal(health.sources.healthy, 0);

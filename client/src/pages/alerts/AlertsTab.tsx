@@ -174,7 +174,7 @@ export function AlertsTab() {
       key: 'alert',
       header: 'Alert',
       cell: (row) => (
-        <div className="min-w-[13rem]">
+        <div className="min-w-[11.5rem] sm:min-w-[13rem]">
           <div className="flex items-start gap-1.5">
             <span className="line-clamp-2 font-medium text-ink">{row.title}</span>
             {row.is_demo ? <DemoBadge className="mt-px" /> : null}

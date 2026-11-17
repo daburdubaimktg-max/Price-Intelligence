@@ -364,6 +364,8 @@ export interface ImportVoidResponse {
 export interface DatabaseMirrorStatus {
   /** False when PIOS_EXCEL_MIRROR=off. */
   enabled: boolean;
+  /** True when this server process is refreshing the mirror on its own (enabled and its periodic housekeeping is running). */
+  auto_refresh: boolean;
   /** Absolute path of the mirror workbook on the server. */
   path: string;
   /** True once a mirror file exists. */

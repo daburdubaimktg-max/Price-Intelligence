@@ -106,11 +106,8 @@ export function RetailerDrawer({
       const result = await apiPost<{ job: CollectionJob }>(`/collection/retailers/${r.id}/run`);
       announced.current = null;
       setStartedJob(result.job);
-      if (result.job.status === 'not_configured') {
-        toast.error('Nothing was collected — the source is not configured', result.job.error_message ?? undefined);
-      } else {
-        toast.success(result.job.data_class === 'simulated' ? 'Simulated demo run started' : 'Collection started', `Job #${result.job.id} for ${r.name}`);
-      }
+      // "Requested" is all that is known now; the notice below follows the job to its real outcome.
+      toast.info(`Run requested for ${r.name}`, `Job #${result.job.id}`);
       await refreshAll();
     } catch (err) {
       toast.error('The collection was not started', errorText(err));

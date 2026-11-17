@@ -133,7 +133,9 @@ function resolveBy<T extends { id: number; name: string }>(items: T[], terms: st
   for (const term of terms) {
     const t = normalise(term);
     if (!t) continue;
-    let hits = items.filter((i) => normalise(i.name) === t || extra(i).includes(t));
+    // most specific first: the exact name, then an alias (e.g. a retailer's short name), then phrase containment
+    let hits = items.filter((i) => normalise(i.name) === t);
+    if (!hits.length) hits = items.filter((i) => extra(i).includes(t));
     if (!hits.length) hits = items.filter((i) => hasPhrase(normalise(i.name), t) || extra(i).some((e) => hasPhrase(e, t)));
     if (!hits.length) hits = items.filter((i) => hasPhrase(t, normalise(i.name)));
     if (hits.length) for (const h of hits) ids.add(h.id);
@@ -177,8 +179,10 @@ export function matchProducts(catalogue: Catalogue, term: string): Catalogue['pr
     if (sizes.length && !sizes.some((s) => name.includes(s))) continue;
     const matched = name.filter((w) => q.has(w)).length;
     if (matched < 2) continue;
-    // every brand word that is not also a generic word of the product name must be mentioned
-    const brandOk = brand.every((w) => q.has(w)) || brand.filter((w) => q.has(w)).length >= Math.max(1, brand.length - 1);
+    // when the product name carries its brand ("Dabur Amla Hair Oil"), the brand must be mentioned too, so that
+    // "Parachute hair oil 200ml" never matches a Dabur product; names without the brand are matched on their own words
+    const brandInName = brand.filter((w) => name.includes(w));
+    const brandOk = brandInName.length === 0 || brandInName.every((w) => q.has(w)) || brandInName.filter((w) => q.has(w)).length >= Math.max(1, brandInName.length - 1);
     if (!brandOk) continue;
     scored.push({ p, matched, score: matched / name.length });
   }
@@ -330,17 +334,42 @@ export function interpretBuiltin(question: string, catalogue: Catalogue, today: 
   });
   const productBrandIds = new Set(products.map((p) => p.brand_id));
 
-  const brands = catalogue.brands.filter((b) => hasPhrase(q, normalise(b.name)) && !productBrandIds.has(b.id));
+  // a brand word that is simply part of a matched product's name is not a separate brand filter
+  const productNames = products.map((p) => normalise(p.name));
+  const brands = catalogue.brands.filter((b) => hasPhrase(q, normalise(b.name)) && !productBrandIds.has(b.id) && !productNames.some((name) => hasPhrase(name, normalise(b.name))));
   // a brand whose name is a prefix of another matched brand ("Dabur" in "Dabur Amla") is dropped
   const brandNames = brands
     .filter((b) => !brands.some((o) => o.id !== b.id && hasPhrase(normalise(o.name), normalise(b.name))))
     .map((b) => b.name);
 
   const retailerPool = marketIds.length ? catalogue.retailers.filter((r) => marketIds.includes(r.market_id)) : catalogue.retailers;
-  const retailers = retailerPool.filter((r) => {
-    const short = retailerShortName(r.name, catalogue);
-    return hasPhrase(q, normalise(r.name)) || (short.length > 2 && hasPhrase(q, short));
-  });
+  // "Carrefour" alone means every Carrefour; "Carrefour UAE" means that one. When a retailer is named in full, others
+  // that merely share its short name ("Acceptance Mart" vs "Acceptance Online") are not pulled in.
+  const retailerMatches = retailerPool
+    .map((r) => {
+      const short = retailerShortName(r.name, catalogue);
+      return { r, short, full: hasPhrase(q, normalise(r.name)), partial: short.length > 2 && hasPhrase(q, short) };
+    })
+    .filter((m) => m.full || m.partial);
+  // A phrase after "at / on / from" that is part of several retailer names ("at Acceptance") means all of them.
+  const CAP = "[A-Z][\\w&.'’-]*(?:\\s+[A-Z][\\w&.'’-]*)*";
+  const listed = new RegExp(`\\b(at|on|from|in|across)\\s+(${CAP}(?:\\s*(?:,|\\band\\b|\\bor\\b)\\s*${CAP})*)`, 'g');
+  for (const m of question.matchAll(listed)) {
+    if (m[1] === 'in' || m[1] === 'across') continue;
+    for (const part of m[2]!.split(/\s*(?:,|\band\b|\bor\b)\s*/)) {
+      const phrase = normalise(part.replace(/[?.!,]+$/, ''));
+      if (phrase.length < 3) continue;
+      for (const r of retailerPool) {
+        if (hasPhrase(normalise(r.name), phrase) && !retailerMatches.some((x) => x.r.id === r.id)) retailerMatches.push({ r, short: phrase, full: false, partial: true });
+      }
+    }
+  }
+  // the longest full name wins: "Test Mart Online" is not also "Test Mart"
+  const fullNames = retailerMatches.filter((m) => m.full).map((m) => normalise(m.r.name));
+  const namedInFull = fullNames.filter((name) => !fullNames.some((other) => other !== name && hasPhrase(other, name)));
+  const retailers = retailerMatches
+    .filter((m) => (m.full ? namedInFull.includes(normalise(m.r.name)) : !namedInFull.some((name) => hasPhrase(name, m.short))))
+    .map((m) => m.r);
 
   const categories = products.length
     ? []
@@ -378,8 +407,6 @@ export function interpretBuiltin(question: string, catalogue: Catalogue, today: 
   const TIME_WORDS = /^(january|february|march|april|may|june|july|august|september|october|november|december|monday|tuesday|wednesday|thursday|friday|saturday|sunday|q[1-4]|today|yesterday)$/i;
   const unknownRetailers: string[] = [];
   const unknownMarkets: string[] = [];
-  const CAP = "[A-Z][\\w&.'’-]*(?:\\s+[A-Z][\\w&.'’-]*)*";
-  const listed = new RegExp(`\\b(at|on|from|in|across)\\s+(${CAP}(?:\\s*(?:,|\\band\\b|\\bor\\b)\\s*${CAP})*)`, 'g');
   for (const m of question.matchAll(listed)) {
     for (const part of m[2]!.split(/\s*(?:,|\band\b|\bor\b)\s*/)) {
       const phrase = part.replace(/[?.!,]+$/, '').trim();
@@ -390,8 +417,16 @@ export function interpretBuiltin(question: string, catalogue: Catalogue, today: 
   }
   let unknownProduct: string | null = null;
   if (products.length === 0) {
-    const named = /\bprices?\s+(?:of|for)\s+(?:the\s+)?(.+?)(?=\s+(?:at|on|in|over|during|from|across|last|this|since|between|today|yesterday|now|currently|right)\b|[?.!]|$)/i.exec(question);
-    const candidate = named?.[1]?.trim();
+    // A product that is named but not in the catalogue: "price of X", "price history of X", "how much does X cost",
+    // "how much is X", "cost of X", "what does X cost".
+    const STOP = "(?=\\s+(?:at|on|in|over|during|from|across|last|this|since|between|today|yesterday|now|currently|right|costs?)\\b|[?.!]|$)";
+    const NAMED_PRODUCT = [
+      new RegExp(`\\bprices?\\s+(?:history\\s+)?(?:of|for)\\s+(?:the\\s+)?(.+?)${STOP}`, 'i'),
+      new RegExp(`\\bhow much\\s+(?:does|do|did|is|are|was|were)\\s+(?:the\\s+)?(.+?)${STOP}`, 'i'),
+      new RegExp(`\\b(?:cost|pricing)\\s+of\\s+(?:the\\s+)?(.+?)${STOP}`, 'i'),
+      new RegExp(`\\bwhat\\s+(?:does|do|did)\\s+(?:the\\s+)?(.+?)${STOP}`, 'i'),
+    ];
+    const candidate = NAMED_PRODUCT.map((re) => re.exec(question)?.[1]?.trim()).find((c) => !!c);
     if (candidate && !/^(this|that|the|a|an|it|its|their|our)\b/i.test(candidate) && !/^(product|products|item|items)$/i.test(candidate) && !catalogue.brands.some((b) => normalise(b.name) === normalise(candidate)) && !catalogue.categories.some((c) => normalise(c.name) === normalise(candidate))) {
       unknownProduct = candidate;
     }

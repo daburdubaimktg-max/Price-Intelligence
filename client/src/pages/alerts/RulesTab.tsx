@@ -416,12 +416,20 @@ export function RulesTab() {
       key: 'name',
       header: 'Rule',
       cell: (rule) => (
-        <div className="min-w-[12rem]">
+        <div className="min-w-[9.5rem] sm:min-w-[12rem]">
           <div className="flex items-center gap-1.5">
             <span className="font-medium text-ink">{rule.name}</span>
             {rule.is_demo ? <DemoBadge /> : null}
           </div>
           <div className="text-[11.5px] text-ink-3">{alertTypeLabel(rule.type)}</div>
+          {/* phones: the columns hidden at this width, folded into the row */}
+          <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11.5px] text-ink-3 md:hidden">
+            <SeverityBadge severity={rule.severity} />
+            <span className="num sm:hidden">{ruleThresholdText(rule)}</span>
+            <span className="num">
+              {fmtNumber(rule.alert_count)} alerts · {fmtNumber(rule.open_count)} active
+            </span>
+          </div>
         </div>
       ),
     },

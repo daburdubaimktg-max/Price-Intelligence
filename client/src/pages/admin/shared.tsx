@@ -2,10 +2,11 @@
 import { useCallback, useState, type ReactNode } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { Check, CircleCheck, CircleDashed, Copy, Cpu, KeyRound, ShieldAlert, Trash2, type LucideIcon } from 'lucide-react';
+import { apiGet } from '@/lib/api.ts';
 import { fmtNumber, fmtRelative } from '@/lib/format.ts';
 import { Badge, Button, cn, EmptyState, Input, Notice, type BadgeTone } from '@/components/ui/primitives.tsx';
 import type { IntegrationState } from '@shared/api/admin.ts';
-import type { CollectionJob } from '@shared/api/collection.ts';
+import type { CollectionJob, CollectionJobDetail } from '@shared/api/collection.ts';
 
 export function errorText(error: unknown, fallback = 'Something went wrong'): string {
   return error instanceof Error && error.message ? error.message : fallback;
@@ -228,4 +229,36 @@ export function JobOutcome({ job, children }: { job: CollectionJob; children?: R
       {job.error_code ? <span className="mono"> ({job.error_code})</span> : null} {children}
     </Notice>
   );
+}
+
+/** Polls a collection job until it has really finished. Returns null when it is still running after the wait (or cannot be read). */
+export async function waitForJob(jobId: number, attempts = 40, intervalMs = 1000): Promise<CollectionJob | null> {
+  for (let i = 0; i < attempts; i++) {
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    try {
+      const { job } = await apiGet<CollectionJobDetail>(`/collection/jobs/${jobId}`);
+      if (job.status !== 'queued' && job.status !== 'running') return job;
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+/** One toast that says what a finished job actually did — never "success" for a run that collected nothing. */
+export function announceJob(
+  toast: { success: (title: string, description?: string) => void; error: (title: string, description?: string) => void; info: (title: string, description?: string) => void },
+  job: CollectionJob,
+  retailerName: string,
+): void {
+  const simulated = job.data_class === 'simulated';
+  const kind = simulated ? 'Simulated demo run' : 'Collection';
+  const counts = `${retailerName}: ${fmtNumber(job.listings_succeeded)} of ${fmtNumber(job.listings_total)} listings read, ${fmtNumber(job.observations_created)} new observations${
+    simulated ? ' (DEMO)' : ''
+  }`;
+  if (job.status === 'succeeded') toast.success(`${kind} finished`, counts);
+  else if (job.status === 'partial') toast.info(`${kind} finished with problems`, counts);
+  else if (job.status === 'not_configured') toast.error(`Nothing was collected — ${retailerName} is not configured`, job.error_message ?? undefined);
+  else if (job.status === 'cancelled') toast.info(`${kind} was cancelled`, retailerName);
+  else toast.error(`${kind} failed`, job.error_message ?? retailerName);
 }

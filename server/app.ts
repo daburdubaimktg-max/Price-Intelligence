@@ -116,7 +116,8 @@ export async function buildApp(overrides: Partial<Config> = {}): Promise<BuiltAp
   });
   await app.register(cookie);
   await app.register(multipart, { limits: { fileSize: 30 * 1024 * 1024, files: 1, fields: 40 } });
-  await app.register(rateLimit, { global: false });
+  // Limits are declared per route (sign-in, assistant); without the plugin those declarations are inert.
+  if (config.rateLimits) await app.register(rateLimit, { global: false });
 
   // ---- authentication & authorisation (default deny) -------------------------------------------
   app.addHook('onRequest', async (req) => {

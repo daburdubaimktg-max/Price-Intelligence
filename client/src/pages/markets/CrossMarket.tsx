@@ -12,8 +12,9 @@ import { DataTable, type Column } from '@/components/ui/data-table.tsx';
 import { FilterBar, MultiSelect, ProductPicker, type Option } from '@/components/ui/filters.tsx';
 import { Badge, Card, CardHeader, cn, EmptyState, ErrorState, LoadingBlock, Notice, Segmented, Select, StatTile, Tip } from '@/components/ui/primitives.tsx';
 import { DASH, fmtDate, fmtDateTime, fmtDateTimeShort, fmtMoney, fmtNumber, fmtPct, fmtPrice, fmtUnitPrice, plural } from '@/lib/format.ts';
-import { diffDays, useApiQuery, useDates, useIsNarrow, useReference } from '@/lib/hooks.ts';
+import { diffDays, useApiQuery, useDates, useReference } from '@/lib/hooks.ts';
 import type { Conversion, CrossMarketGroupRow, CrossMarketProductResult, CrossMarketRow, DemoNote } from '@shared/api/analytics.ts';
+import { useCardWidth } from './layout.ts';
 import type { MarketParams, MarketUrl } from './MarketsPage.tsx';
 
 type ProductResponse = { mode: 'product' } & CrossMarketProductResult;
@@ -91,16 +92,17 @@ function Facts({ items }: { items: Array<[string, ReactNode] | null> }) {
   );
 }
 
+/** Market name with its code and currency; the demo marker sits on the second line so the cell never wraps. */
 function MarketName({ name, code, currency, base, demo }: { name: string; code: string; currency: string; base?: boolean; demo: boolean }) {
   return (
-    <span className="flex min-w-0 flex-col">
-      <span className="flex flex-wrap items-center gap-1.5">
+    <span className="flex min-w-0 flex-col gap-0.5">
+      <span className="flex items-center gap-1.5 whitespace-nowrap">
         <span className="font-medium text-ink">{name}</span>
         {base ? <Badge tone="accent">Base</Badge> : null}
-        {demo ? <DemoBadge /> : null}
       </span>
-      <span className="text-[11.5px] leading-4 text-ink-3">
+      <span className="flex items-center gap-1.5 text-[11.5px] leading-4 whitespace-nowrap text-ink-3">
         {code} · {currency}
+        {demo ? <DemoBadge /> : null}
       </span>
     </span>
   );
@@ -108,7 +110,7 @@ function MarketName({ name, code, currency, base, demo }: { name: string; code: 
 
 const fix1 = (value: number) => value.toFixed(1);
 
-function IndexCell({ value, missing }: { value: number | null; missing?: string }) {
+function IndexCell({ value, missing, scale = true }: { value: number | null; missing?: string; scale?: boolean }) {
   if (value === null) {
     return missing ? (
       <Tip content={missing}>
@@ -120,7 +122,7 @@ function IndexCell({ value, missing }: { value: number | null; missing?: string 
   }
   return (
     <span className="inline-flex items-center justify-end gap-2">
-      <IndexScale value={value} width={64} className="hidden sm:inline-block" />
+      {scale ? <IndexScale value={value} width={64} /> : null}
       <span className="num inline-block w-10 text-right font-medium text-ink">{fix1(value)}</span>
     </span>
   );
@@ -143,7 +145,11 @@ function Notes({ notes, plain }: { notes: string[]; plain?: boolean }) {
 // ---------------------------------------------------------------------------------------------
 function ProductComparison({ data, refetching }: { data: ProductResponse; refetching: boolean }) {
   const { maps } = useReference();
-  const narrow = useIsNarrow(639);
+  // By the width of the table's own card: all eight columns need about 1030px; the exchange-rate column
+  // goes first (every rate is also stated under the table), then the last-observed column and the index
+  // graphic; in a narrower card each market becomes a stacked entry that spells everything out.
+  const [cardRef, cardWidth] = useCardWidth();
+  const layout = cardWidth >= 1045 ? 'full' : cardWidth >= 865 ? 'no-rate' : cardWidth >= 720 ? 'core' : 'list';
   const [sort, setSort] = useState('-converted');
   const priced = data.rows.filter((r) => r.converted?.avg !== null && r.converted?.avg !== undefined);
   const base = data.rows.find((r) => r.market_id === data.base_market_id) ?? null;
@@ -215,23 +221,21 @@ function ProductComparison({ data, refetching }: { data: ProductResponse; refetc
       header: data.product.unit_basis ? data.product.unit_basis.replace('per ', 'Per ') : 'Unit price',
       align: 'right',
       sortKey: 'unit',
-      hideBelow: 'sm',
       headerTitle: `Unit price in ${data.currency} — pack sizes normalised`,
       cell: (r) => (r.converted?.unit_avg === null || r.converted?.unit_avg === undefined ? <span className="text-ink-4">{DASH}</span> : fmtUnitPrice(r.converted.unit_avg, data.currency)),
     },
     {
       key: 'index',
-      header: 'Index vs base',
+      header: layout === 'core' ? 'Index' : 'Index vs base',
       align: 'right',
       sortKey: 'index',
       headerTitle: base ? `Converted average price relative to ${base.market_name} (= 100)` : 'Converted average price relative to the base market (= 100)',
-      cell: (r) => <IndexCell value={r.index} />,
+      cell: (r) => <IndexCell value={r.index} scale={layout !== 'core'} />,
     },
     {
       key: 'listings',
       header: 'Listings',
       align: 'right',
-      hideBelow: 'md',
       headerTitle: 'Retailers listing the product, and how many of its listings are on promotion now',
       cell: (r) => (
         <span className="flex flex-col items-end">
@@ -245,12 +249,12 @@ function ProductComparison({ data, refetching }: { data: ProductResponse; refetc
     {
       key: 'observed',
       header: 'Last observed',
-      hideBelow: 'lg',
       headerTitle: 'Hover for the exact market-local and UTC time',
       cell: (r) => <MarketTime iso={r.last_observed_at} timeZone={maps.market.get(r.market_id)?.timezone} relative />,
     },
-    { key: 'rate', header: 'Exchange rate', hideBelow: 'xl', nowrap: true, cell: (r) => <RateCell conversion={r.conversion} /> },
+    { key: 'rate', header: 'Exchange rate', nowrap: true, cell: (r) => <RateCell conversion={r.conversion} /> },
   ];
+  const shown = columns.filter((c) => (c.key === 'rate' ? layout === 'full' : c.key === 'observed' ? layout === 'full' || layout === 'no-rate' : true));
 
   return (
     <div className="flex flex-col gap-4">
@@ -338,67 +342,69 @@ function ProductComparison({ data, refetching }: { data: ProductResponse; refetc
         </>
       )}
 
-      <Card>
-        <CardHeader title="By market" subtitle={`Latest prices per market, normalised to ${data.currency} and to unit price`} />
-        {narrow ? (
-          <>
-            <label className="flex items-center gap-2 border-b border-line px-4 py-2.5 text-[12.5px] text-ink-3">
-              <span className="shrink-0 whitespace-nowrap">Sort by</span>
-              <Select className="min-w-0 flex-1" value={sort} onChange={(e) => setSort(e.target.value)} aria-label="Sort markets by">
-                <option value="-converted">Highest price in {data.currency}</option>
-                <option value="converted">Lowest price in {data.currency}</option>
-                <option value="-unit">Highest unit price</option>
-                <option value="-period">Highest {periodDays}-day average</option>
-                <option value="market">Market name</option>
-              </Select>
-            </label>
-            {sorted.length === 0 ? (
-              <EmptyState title="The product is not listed in any market" />
-            ) : (
-              <ul className={cn('m-0 list-none divide-y divide-line p-0 transition-opacity', refetching && 'opacity-60')}>
-                {sorted.map((r) => (
-                  <li key={r.market_id} className="flex flex-col gap-2 px-4 py-3">
-                    <div className="flex items-start justify-between gap-3 text-[13.5px] leading-5">
-                      <MarketName name={r.market_name} code={r.market_code} currency={r.currency_code} base={r.market_id === data.base_market_id} demo={r.is_demo} />
-                      <span className="flex shrink-0 flex-col items-end">
-                        {r.converted?.avg === null || r.converted?.avg === undefined ? (
-                          <span className="text-[12px] text-ink-3">{r.native ? 'No exchange rate' : 'No fresh price'}</span>
-                        ) : (
-                          <span className="num font-semibold text-ink">{fmtMoney(r.converted.avg, data.currency)}</span>
-                        )}
-                        {r.index === null ? null : <span className="num text-[11.5px] leading-4 text-ink-3">index {fix1(r.index)}</span>}
-                      </span>
-                    </div>
-                    <Facts
-                      items={[
-                        r.native
-                          ? [
-                              'Local price',
-                              `${fmtMoney(r.native.avg, r.currency_code)}${r.native.min === r.native.max ? '' : ` (${fmtPrice(r.native.min, r.currency_code)} – ${fmtPrice(r.native.max, r.currency_code)})`}`,
-                            ]
-                          : null,
-                        r.period_avg_converted === null ? null : [`${periodDays}-day average`, fmtMoney(r.period_avg_converted, data.currency)],
-                        r.converted?.unit_avg === null || r.converted?.unit_avg === undefined
-                          ? null
-                          : [data.product.unit_basis ? data.product.unit_basis.replace('per ', 'Per ') : 'Unit price', `${data.currency} ${fmtUnitPrice(r.converted.unit_avg, data.currency)}`],
-                        ['Listings', `${plural(r.retailers, 'retailer')} · ${fmtNumber(r.on_promo)} of ${fmtNumber(r.listings)} on promotion`],
-                        ['Last observed', <MarketTime iso={r.last_observed_at} timeZone={maps.market.get(r.market_id)?.timezone} short />],
-                        ['Exchange rate', <RateLine conversion={r.conversion} />],
-                      ]}
-                    />
-                  </li>
-                ))}
-              </ul>
-            )}
-          </>
-        ) : (
-          <DataTable columns={columns} rows={sorted} rowKey={(r) => r.market_id} sort={sort} onSort={setSort} refetching={refetching} empty={<EmptyState title="The product is not listed in any market" />} />
-        )}
-        <div className="flex flex-col gap-2 border-t border-line px-4 py-3">
-          <FxNote conversions={uniqueConversions(data.rows)} missing={data.missing_rates} target={data.currency} />
-          <Notes notes={data.notes} />
-        </div>
-      </Card>
+      <div ref={cardRef} className="min-w-0">
+        <Card>
+          <CardHeader title="By market" subtitle={`Latest prices per market, normalised to ${data.currency} and to unit price`} />
+          {layout === 'list' ? (
+            <>
+              <label className="flex items-center gap-2 border-b border-line px-4 py-2.5 text-[12.5px] text-ink-3">
+                <span className="shrink-0 whitespace-nowrap">Sort by</span>
+                <Select className="min-w-0 flex-1" value={sort} onChange={(e) => setSort(e.target.value)} aria-label="Sort markets by">
+                  <option value="-converted">Highest price in {data.currency}</option>
+                  <option value="converted">Lowest price in {data.currency}</option>
+                  <option value="-unit">Highest unit price</option>
+                  <option value="-period">Highest {periodDays}-day average</option>
+                  <option value="market">Market name</option>
+                </Select>
+              </label>
+              {sorted.length === 0 ? (
+                <EmptyState title="The product is not listed in any market" />
+              ) : (
+                <ul className={cn('m-0 list-none divide-y divide-line p-0 transition-opacity', refetching && 'opacity-60')}>
+                  {sorted.map((r) => (
+                    <li key={r.market_id} className="flex flex-col gap-2 px-4 py-3">
+                      <div className="flex items-start justify-between gap-3 text-[13.5px] leading-5">
+                        <MarketName name={r.market_name} code={r.market_code} currency={r.currency_code} base={r.market_id === data.base_market_id} demo={r.is_demo} />
+                        <span className="flex shrink-0 flex-col items-end">
+                          {r.converted?.avg === null || r.converted?.avg === undefined ? (
+                            <span className="text-[12px] text-ink-3">{r.native ? 'No exchange rate' : 'No fresh price'}</span>
+                          ) : (
+                            <span className="num font-semibold text-ink">{fmtMoney(r.converted.avg, data.currency)}</span>
+                          )}
+                          {r.index === null ? null : <span className="num text-[11.5px] leading-4 text-ink-3">index {fix1(r.index)}</span>}
+                        </span>
+                      </div>
+                      <Facts
+                        items={[
+                          r.native
+                            ? [
+                                'Local price',
+                                `${fmtMoney(r.native.avg, r.currency_code)}${r.native.min === r.native.max ? '' : ` (${fmtPrice(r.native.min, r.currency_code)} – ${fmtPrice(r.native.max, r.currency_code)})`}`,
+                              ]
+                            : null,
+                          r.period_avg_converted === null ? null : [`${periodDays}-day average`, fmtMoney(r.period_avg_converted, data.currency)],
+                          r.converted?.unit_avg === null || r.converted?.unit_avg === undefined
+                            ? null
+                            : [data.product.unit_basis ? data.product.unit_basis.replace('per ', 'Per ') : 'Unit price', `${data.currency} ${fmtUnitPrice(r.converted.unit_avg, data.currency)}`],
+                          ['Listings', `${plural(r.retailers, 'retailer')} · ${fmtNumber(r.on_promo)} of ${fmtNumber(r.listings)} on promotion`],
+                          ['Last observed', <MarketTime iso={r.last_observed_at} timeZone={maps.market.get(r.market_id)?.timezone} short />],
+                          ['Exchange rate', <RateLine conversion={r.conversion} />],
+                        ]}
+                      />
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </>
+          ) : (
+            <DataTable columns={shown} rows={sorted} rowKey={(r) => r.market_id} sort={sort} onSort={setSort} refetching={refetching} empty={<EmptyState title="The product is not listed in any market" />} />
+          )}
+          <div className="flex flex-col gap-2 border-t border-line px-4 py-3">
+            <FxNote conversions={uniqueConversions(data.rows)} missing={data.missing_rates} target={data.currency} />
+            <Notes notes={data.notes} />
+          </div>
+        </Card>
+      </div>
     </div>
   );
 }
@@ -407,7 +413,10 @@ function ProductComparison({ data, refetching }: { data: ProductResponse; refetc
 // A category or brand across markets
 // ---------------------------------------------------------------------------------------------
 function GroupComparison({ data, refetching, scopeLabel }: { data: GroupResponse; refetching: boolean; scopeLabel: string }) {
-  const narrow = useIsNarrow(639);
+  // the exchange-rate column needs a card of about 835px (the rates are also stated under the table);
+  // in a card too narrow for the other five columns each market / unit basis becomes a stacked entry
+  const [cardRef, cardWidth] = useCardWidth();
+  const layout = cardWidth >= 845 ? 'full' : cardWidth >= 670 ? 'no-rate' : 'list';
   const sideText = (s: CrossMarketGroupRow['own']) =>
     s ? `${data.currency} ${fmtUnitPrice(s.unit_avg, data.currency)} · ${plural(s.products, 'product')}, ${plural(s.listings, 'listing')}` : 'Not listed';
   const empty = (
@@ -444,8 +453,9 @@ function GroupComparison({ data, refetching, scopeLabel }: { data: GroupResponse
       headerTitle: 'Own average unit price as an index of the competitor average (100 = same level). Same unit basis only.',
       cell: (r) => <IndexCell value={r.index} missing="An index needs both own-brand and competitor listings on the same unit basis in this market." />,
     },
-    { key: 'rate', header: 'Exchange rate', hideBelow: 'lg', nowrap: true, cell: (r) => <RateCell conversion={r.conversion} /> },
+    { key: 'rate', header: 'Exchange rate', nowrap: true, cell: (r) => <RateCell conversion={r.conversion} /> },
   ];
+  const shown = layout === 'full' ? columns : columns.filter((c) => c.key !== 'rate');
   return (
     <div className="flex flex-col gap-4">
       <DemoNotice demo={data.demo} />
@@ -454,37 +464,39 @@ function GroupComparison({ data, refetching, scopeLabel }: { data: GroupResponse
           <Notes notes={data.notes} plain />
         </Notice>
       ) : null}
-      <Card>
-        <CardHeader title={`${scopeLabel} across markets`} subtitle={`Average unit prices of fresh listings, converted to ${data.currency}; one row per market and unit basis`} />
-        {!narrow ? (
-          <DataTable columns={columns} rows={data.rows} rowKey={(r) => `${r.market_id}|${r.basis}`} refetching={refetching} empty={empty} />
-        ) : data.rows.length === 0 ? (
-          empty
-        ) : (
-          <ul className={cn('m-0 list-none divide-y divide-line p-0 transition-opacity', refetching && 'opacity-60')}>
-            {data.rows.map((r) => (
-              <li key={`${r.market_id}|${r.basis}`} className="flex flex-col gap-2 px-4 py-3">
-                <div className="flex items-start justify-between gap-3 text-[13.5px] leading-5">
-                  <MarketName name={r.market_name} code={r.market_code} currency={r.currency_code} demo={r.is_demo} />
-                  <Badge tone="outline">{r.basis}</Badge>
-                </div>
-                <Facts
-                  items={[
-                    ['Own brands', sideText(r.own)],
-                    ['Competitors', sideText(r.competitor)],
-                    ['Own ÷ competitor', r.index === null ? 'Needs both sides on this unit basis' : <span className="font-medium text-ink">index {fix1(r.index)}</span>],
-                    ['Exchange rate', <RateLine conversion={r.conversion} />],
-                  ]}
-                />
-              </li>
-            ))}
-          </ul>
-        )}
-        <div className="flex flex-col gap-2 border-t border-line px-4 py-3">
-          <FxNote conversions={uniqueConversions(data.rows)} missing={data.missing_rates} target={data.currency} />
-          <p className="text-[12px] leading-5 text-ink-3">For like-for-like gaps between mapped products, use Competitor Intelligence.</p>
-        </div>
-      </Card>
+      <div ref={cardRef} className="min-w-0">
+        <Card>
+          <CardHeader title={`${scopeLabel} across markets`} subtitle={`Average unit prices of fresh listings, converted to ${data.currency}; one row per market and unit basis`} />
+          {layout !== 'list' ? (
+            <DataTable columns={shown} rows={data.rows} rowKey={(r) => `${r.market_id}|${r.basis}`} refetching={refetching} empty={empty} />
+          ) : data.rows.length === 0 ? (
+            empty
+          ) : (
+            <ul className={cn('m-0 list-none divide-y divide-line p-0 transition-opacity', refetching && 'opacity-60')}>
+              {data.rows.map((r) => (
+                <li key={`${r.market_id}|${r.basis}`} className="flex flex-col gap-2 px-4 py-3">
+                  <div className="flex items-start justify-between gap-3 text-[13.5px] leading-5">
+                    <MarketName name={r.market_name} code={r.market_code} currency={r.currency_code} demo={r.is_demo} />
+                    <Badge tone="outline">{r.basis}</Badge>
+                  </div>
+                  <Facts
+                    items={[
+                      ['Own brands', sideText(r.own)],
+                      ['Competitors', sideText(r.competitor)],
+                      ['Own ÷ competitor', r.index === null ? 'Needs both sides on this unit basis' : <span className="font-medium text-ink">index {fix1(r.index)}</span>],
+                      ['Exchange rate', <RateLine conversion={r.conversion} />],
+                    ]}
+                  />
+                </li>
+              ))}
+            </ul>
+          )}
+          <div className="flex flex-col gap-2 border-t border-line px-4 py-3">
+            <FxNote conversions={uniqueConversions(data.rows)} missing={data.missing_rates} target={data.currency} />
+            <p className="text-[12px] leading-5 text-ink-3">For like-for-like gaps between mapped products, use Competitor Intelligence.</p>
+          </div>
+        </Card>
+      </div>
     </div>
   );
 }

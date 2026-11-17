@@ -56,13 +56,17 @@ const list = (items: string[], max = 4): string => {
   return `${items.slice(0, max).join(', ')} and ${items.length - max} more`;
 };
 
-function moneyFormatter(ctx: AppContext): (value: number | null | undefined, currency: string | null | undefined) => string {
+/**
+ * Formats an amount with the decimals of its currency (KWD 0.975, UGX 12,500). `bare` omits the currency code for
+ * table cells whose row already names the currency — the precision still follows that currency.
+ */
+function moneyFormatter(ctx: AppContext): (value: number | null | undefined, currency: string | null | undefined, bare?: boolean) => string {
   const decimals = new Map(ctx.db.all<{ code: string; decimals: number }>('SELECT code, decimals FROM currencies').map((c) => [c.code, c.decimals]));
-  return (value, currency) => {
+  return (value, currency, bare = false) => {
     if (value === null || value === undefined) return 'n/a';
     const d = currency ? (decimals.get(currency) ?? 2) : 2;
     const text = value.toLocaleString('en-GB', { minimumFractionDigits: d, maximumFractionDigits: d });
-    return currency ? `${currency} ${text}` : text;
+    return currency && !bare ? `${currency} ${text}` : text;
   };
 }
 
@@ -153,7 +157,7 @@ function buildEvidence(ctx: AppContext, filter: ObsFilter, extraLinks: Array<{ l
       markets: [...new Set(retailers.map((r) => r.market_name))],
       sources,
       observation_ids: ids,
-      links: [...(linkFilter === null ? [] : [historyLink(linkFilter ?? filter)]), ...extraLinks],
+      links: [...(linkFilter === null ? [] : [historyLink(linkFilter ?? filter)]), ...extraLinks].filter((link, i, all) => all.findIndex((l) => l.href === link.href) === i),
     },
     demo: { demo_rows: totals.demo ?? 0, total_rows: totals.n, all_demo: totals.n > 0 && (totals.demo ?? 0) === totals.n, any_demo: (totals.demo ?? 0) > 0 },
   };
@@ -257,11 +261,11 @@ function priceHistory(ctx: AppContext, plan: QueryPlan, scope: Scope, period: Re
           product: s.label,
           where: s.sublabel ?? '',
           currency: s.currency ?? '',
-          first: money(s.stats!.first, null),
-          last: money(s.stats!.last, null),
-          min: money(s.stats!.min, null),
-          max: money(s.stats!.max, null),
-          avg: money(s.stats!.avg, null),
+          first: money(s.stats!.first, s.currency, true),
+          last: money(s.stats!.last, s.currency, true),
+          min: money(s.stats!.min, s.currency, true),
+          max: money(s.stats!.max, s.currency, true),
+          avg: money(s.stats!.avg, s.currency, true),
           change: pct(s.stats!.change_pct, true),
           days: s.stats!.n,
         })),
@@ -343,7 +347,7 @@ function currentPrices(ctx: AppContext, plan: QueryPlan, scope: Scope, money: Re
           retailer: r.retailer_name,
           market: r.market_name,
           price: money(r.current_price, r.currency_code),
-          regular: money(r.regular_price, null),
+          regular: money(r.regular_price, r.currency_code, true),
           promo: r.is_promo ? `${r.discount_pct !== null ? `${pct(r.discount_pct)} off` : (PROMO_TYPE_LABELS[r.promo_type as PromoType] ?? 'Offer')}` : '—',
           observed: fmtDate(r.observed_at),
           source: DATA_CLASS_LABELS[r.data_class as DataClass] ?? r.data_class ?? '',
@@ -431,7 +435,7 @@ function priceChanges(ctx: AppContext, plan: QueryPlan, scope: Scope, period: Re
           retailer: r.retailer_name,
           market: r.market_name,
           from: money(r.old_price, r.currency_code),
-          to: money(r.new_price, null),
+          to: money(r.new_price, r.currency_code, true),
           change: pct(r.change_pct, true),
           note: r.is_promo ? 'Promotion started' : '',
         })),
@@ -721,7 +725,7 @@ function volatilityAnswer(ctx: AppContext, plan: QueryPlan, scope: Scope, period
           { key: 'min', label: 'Lowest', align: 'right' },
           { key: 'max', label: 'Highest', align: 'right' },
         ],
-        rows: rows.map((r) => ({ product: r.label, scope: r.sublabel ?? '', currency: r.currency, vol: pct(r.volatility_pct), changes: r.price_changes, min: money(r.min, null), max: money(r.max, null) })),
+        rows: rows.map((r) => ({ product: r.label, scope: r.sublabel ?? '', currency: r.currency, vol: pct(r.volatility_pct), changes: r.price_changes, min: money(r.min, r.currency, true), max: money(r.max, r.currency, true) })),
       },
     ],
     evidenceFilter: filter,
@@ -771,8 +775,8 @@ function crossMarket(ctx: AppContext, scope: Scope, money: ReturnType<typeof mon
           market: r.market_name,
           retailers: r.retailers,
           native: r.native ? money(r.native.avg, r.currency_code) : 'no fresh price',
-          converted: money(r.converted?.avg, null),
-          unit: money(r.converted?.unit_avg, null),
+          converted: money(r.converted?.avg, result.currency, true),
+          unit: money(r.converted?.unit_avg, result.currency, true),
           index: r.index ?? 'n/a',
           promo: r.on_promo,
         })),
@@ -856,7 +860,7 @@ export function executePlan(ctx: AppContext, plan: QueryPlan, catalogue: Catalog
       status: 'no_data',
       paragraphs: [
         `No monitored retailer matches "${(unknownRetailers.length ? unknownRetailers : plan.retailers).join('", "')}"${scope.marketNames.length ? ` in ${list(scope.marketNames, 3)}` : ''}, so no observation exists for it. The data is unavailable.`,
-        'Retailers are added in Administration → Retailers; prices appear here once observations have been collected, imported or entered for them.',
+        'Retailers are added in Administration → Retailers & listings; prices appear here once observations have been collected, imported or entered for them.',
       ],
     });
   }

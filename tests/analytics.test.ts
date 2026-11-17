@@ -427,6 +427,22 @@ describe('currencies', () => {
     assert.deepEqual(conversion.sources, ['test-desk']);
   });
 
+  it('prefers a real exchange rate over an illustrative demo rate, whatever their dates', async () => {
+    // a demo rate that is NEWER than the real one must not shadow it
+    recordRate(t.ctx, { quote: 'SAR', rate: 9.99, as_of: known.at(0).replace('T08', 'T00'), source: 'DEMO illustrative rate', isDemo: true });
+    const body = await get(`/market-intel/cross-market?product_id=${fx.ownProductId}&currency=AED`);
+    const sa = body.rows.find((r: any) => r.market_id === saMarketId);
+    assert.equal(sa.converted.avg, 23.504);
+    assert.equal(sa.conversion.is_demo, false);
+    assert.deepEqual(sa.conversion.sources, ['test-desk']);
+    // a currency with only demo rates still converts, and says so
+    recordRate(t.ctx, { quote: 'KWD', rate: 0.3, as_of: known.at(1), source: 'DEMO illustrative rate', isDemo: true });
+    const { makeConverter } = await import('../server/services/fx.ts');
+    const converter = makeConverter(t.ctx, 'AED');
+    assert.ok(Math.abs(converter.convert(1, 'KWD')! - 3.6725 / 0.3) < 1e-6);
+    assert.equal(converter.used().find((c) => c.from === 'KWD')!.is_demo, true);
+  });
+
   it('needs a comparison currency and a subject for cross-market comparison', async () => {
     assert.equal((await t.api('GET', `/market-intel/cross-market?product_id=${fx.ownProductId}&currency=native`)).status, 400);
     assert.equal((await t.api('GET', '/market-intel/cross-market')).status, 400);

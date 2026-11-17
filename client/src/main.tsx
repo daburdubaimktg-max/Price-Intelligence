@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { BrowserRouter } from 'react-router';
 import './styles.css';
 import { App } from './app/App.tsx';
+import { ErrorBoundary } from './app/ErrorBoundary.tsx';
 import { AuthProvider } from './lib/auth.tsx';
 import { ApiError } from './lib/api.ts';
 import { ToastProvider } from './components/ui/overlays.tsx';
@@ -29,9 +30,11 @@ createRoot(document.getElementById('root')!).render(
       <BrowserRouter>
         <TooltipProvider delayDuration={250}>
           <ToastProvider>
-            <AuthProvider>
-              <App />
-            </AuthProvider>
+            <ErrorBoundary scope="app">
+              <AuthProvider>
+                <App />
+              </AuthProvider>
+            </ErrorBoundary>
           </ToastProvider>
         </TooltipProvider>
       </BrowserRouter>

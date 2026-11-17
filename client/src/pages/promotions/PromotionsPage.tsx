@@ -80,25 +80,8 @@ export default function PromotionsPage() {
           <ByTypeCard rows={summary.data.by_type} refetching={refetching} />
           <TopDiscountsCard rows={summary.data.top_discounts} onOpen={setListingId} refetching={refetching} />
 
-          <div className="grid gap-4 3xl:grid-cols-2">
-            <BreakdownTable
-              title="By brand"
-              subtitle="Own brands and competitors, side by side"
-              firstColumn="Brand"
-              rows={summary.data.by_brand}
-              showOwnership
-              refetching={refetching}
-              maxHeight={420}
-            />
-            <BreakdownTable
-              title="By retailer"
-              subtitle="Retailer-specific promotional activity"
-              firstColumn="Retailer"
-              rows={summary.data.by_retailer}
-              refetching={refetching}
-              maxHeight={420}
-            />
-          </div>
+          <BreakdownTable title="By brand" subtitle="Own brands and competitors, side by side" firstColumn="Brand" rows={summary.data.by_brand} showOwnership refetching={refetching} maxHeight={420} />
+          <BreakdownTable title="By retailer" subtitle="Retailer-specific promotional activity" firstColumn="Retailer" rows={summary.data.by_retailer} refetching={refetching} maxHeight={420} />
 
           <EpisodesTable filters={filters} onOpen={setListingId} />
         </div>

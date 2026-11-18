@@ -1,8 +1,8 @@
 {
-  "generated_at": "2026-11-17T18:25:07.366Z",
+  "generated_at": "2026-11-18T10:32:43.575Z",
   "db_bytes": 12500992,
-  "gz_bytes": 2385180,
-  "sha256": "b939e507f8094cde92915be38f3eb916a368f15501c82a91b66a80667e192787",
+  "gz_bytes": 2385876,
+  "sha256": "e1ed0bd86a01d26fa4dae6c364a3c872190f9264658c3f6ea07529af4634a051",
   "counts": {
     "observations": 6012,
     "products": 3634,

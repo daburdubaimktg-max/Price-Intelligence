@@ -1,6 +1,6 @@
 /** Retailers (collection sources) and their listings. Adding a retailer is configuration only. */
 import { useState } from 'react';
-import { Ellipsis, KeyRound, List, Pause, Pencil, Play, Plus, Power, ShieldAlert, ShieldCheck, Trash2 } from 'lucide-react';
+import { Ellipsis, KeyRound, List, Pause, Pencil, Play, Plus, Power, SearchCheck, ShieldAlert, ShieldCheck, Trash2 } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { apiDelete, apiGet, apiPatch, apiPost, type Paged } from '@/lib/api.ts';
 import { useCan } from '@/lib/auth.tsx';
@@ -16,6 +16,7 @@ import type { RetailerRow } from '@shared/api/catalogue.ts';
 import type { CollectionHealth, CollectionJob } from '@shared/api/collection.ts';
 import { RetailerDialog, useConnectors } from './RetailerDialog.tsx';
 import { RetailerDrawer } from './RetailerDrawer.tsx';
+import { SiteCheckDialog } from './SiteCheckDialog.tsx';
 import { announceJob, errorText, useRefresh, waitForJob } from './shared.tsx';
 
 type RetailersUrl = {
@@ -49,6 +50,7 @@ export function RetailersTab() {
   const { state, set } = useUrlState<RetailersUrl>(DEFAULTS);
   const [editing, setEditing] = useState<RetailerRow | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [siteCheckOpen, setSiteCheckOpen] = useState(false);
   const [deleting, setDeleting] = useState<RetailerRow | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -333,16 +335,21 @@ export function RetailersTab() {
           subtitle="Each retailer is a collection source with its own method, schedule and listings. Select a row for its configuration status, connection test and listings."
           actions={
             canManage ? (
-              <Button
-                variant="primary"
-                icon={Plus}
-                onClick={() => {
-                  setEditing(null);
-                  setDialogOpen(true);
-                }}
-              >
-                Add retailer
-              </Button>
+              <>
+                <Button icon={SearchCheck} onClick={() => setSiteCheckOpen(true)} title="Find out whether a retailer’s product pages can be read directly, before adding it">
+                  Check a site
+                </Button>
+                <Button
+                  variant="primary"
+                  icon={Plus}
+                  onClick={() => {
+                    setEditing(null);
+                    setDialogOpen(true);
+                  }}
+                >
+                  Add retailer
+                </Button>
+              </>
             ) : undefined
           }
         />
@@ -388,6 +395,7 @@ export function RetailersTab() {
           setDialogOpen(true);
         }}
       />
+      <SiteCheckDialog open={siteCheckOpen} onClose={() => setSiteCheckOpen(false)} />
       <RetailerDialog retailer={editing} open={dialogOpen} onClose={() => setDialogOpen(false)} onSaved={(id) => !editing && set({ retailer: String(id), r_view: undefined })} />
       <ConfirmDialog open={deleting !== null} onClose={() => setDeleting(null)} onConfirm={() => void remove()} title="Delete this retailer?" confirmLabel="Delete retailer" danger loading={busy}>
         <p>

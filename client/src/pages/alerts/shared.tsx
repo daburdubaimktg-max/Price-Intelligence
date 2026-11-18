@@ -57,7 +57,11 @@ export function ruleThresholdText(rule: Pick<AlertRuleRow, 'type' | 'threshold_p
     if (rule.threshold_pct === 0) return rule.type === 'own_more_expensive' ? 'Any premium' : rule.type === 'competitor_promotion' ? 'Any promotion' : 'Any change';
     return `≥ ${fmtNumber(rule.threshold_pct, 2)}%`;
   }
-  if (kind === 'count') return rule.threshold_count === null ? '—' : `${fmtNumber(rule.threshold_count)} in a row`;
+  if (kind === 'count') {
+    if (rule.threshold_count === null) return '—';
+    if (rule.type === 'new_listing') return rule.threshold_count <= 1 ? 'Any new listing' : `${fmtNumber(rule.threshold_count)} or more in one run`;
+    return `${fmtNumber(rule.threshold_count)} in a row`;
+  }
   if (kind === 'hours') return rule.threshold_hours === null ? 'From each source’s schedule' : `Older than ${fmtNumber(rule.threshold_hours, 1)} h`;
   return 'Any occurrence';
 }

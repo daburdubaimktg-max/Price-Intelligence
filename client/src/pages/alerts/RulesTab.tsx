@@ -7,7 +7,7 @@ import { useCan } from '@/lib/auth.tsx';
 import { fmtHours, fmtNumber, fmtRelative } from '@/lib/format.ts';
 import { useReference } from '@/lib/hooks.ts';
 import { ConfirmDialog, Dialog, useToast } from '@/components/ui/overlays.tsx';
-import { Badge, Button, Card, CardHeader, Checkbox, EmptyState, ErrorState, Field, IconButton, Input, Notice, Select, Switch } from '@/components/ui/primitives.tsx';
+import { Badge, Button, Card, CardHeader, Checkbox, cn, EmptyState, ErrorState, Field, IconButton, Input, Notice, Select, Switch } from '@/components/ui/primitives.tsx';
 import { DataTable, type Column } from '@/components/ui/data-table.tsx';
 import { ProductPicker } from '@/components/ui/filters.tsx';
 import { DemoBadge } from '@/components/domain/domain.tsx';
@@ -107,6 +107,8 @@ function RuleDialog({ rule, open, onClose, onSaved }: { rule: AlertRuleRow | nul
 
   const info = ALERT_TYPE_INFO[form.type];
   const collectionOnly = form.type === 'collection_failed';
+  // A newly found listing is not matched to a product yet: its product and product type are unknown.
+  const unmatchedOnly = form.type === 'new_listing';
   const update = (changes: Partial<RuleForm>) => setForm((prev) => ({ ...prev, ...changes }));
 
   const retailers = useMemo(
@@ -125,6 +127,7 @@ function RuleDialog({ rule, open, onClose, onSaved }: { rule: AlertRuleRow | nul
         threshold: next.threshold,
         name: wasDefaultName ? next.name : prev.name,
         ...(type === 'collection_failed' ? { brand_id: '', category_id: '', product_id: [] } : {}),
+        ...(type === 'new_listing' ? { category_id: '', product_id: [] } : {}),
       };
     });
   }
@@ -158,8 +161,8 @@ function RuleDialog({ rule, open, onClose, onSaved }: { rule: AlertRuleRow | nul
       market_id: form.market_id ? Number(form.market_id) : null,
       retailer_id: form.retailer_id ? Number(form.retailer_id) : null,
       brand_id: !collectionOnly && form.brand_id ? Number(form.brand_id) : null,
-      category_id: !collectionOnly && form.category_id ? Number(form.category_id) : null,
-      product_id: !collectionOnly && form.product_id[0] ? Number(form.product_id[0]) : null,
+      category_id: !collectionOnly && !unmatchedOnly && form.category_id ? Number(form.category_id) : null,
+      product_id: !collectionOnly && !unmatchedOnly && form.product_id[0] ? Number(form.product_id[0]) : null,
       channels,
       cooldown_hours: cooldown,
     };
@@ -286,7 +289,12 @@ function RuleDialog({ rule, open, onClose, onSaved }: { rule: AlertRuleRow | nul
                     ))}
                   </Select>
                 </Field>
-                <Field label="Category">
+                {unmatchedOnly ? (
+                  <p className="text-[12.5px] text-ink-3 sm:col-span-2">
+                    Newly found listings are not matched to a product yet, so this rule can be scoped by market, retailer or brand — the brand named in the listing’s title.
+                  </p>
+                ) : null}
+                <Field label="Category" className={unmatchedOnly ? 'hidden' : undefined}>
                   <Select value={form.category_id} onChange={(e) => update({ category_id: e.target.value })}>
                     <option value="">All categories</option>
                     {topCategories.map((c) => (
@@ -303,7 +311,7 @@ function RuleDialog({ rule, open, onClose, onSaved }: { rule: AlertRuleRow | nul
                     ))}
                   </Select>
                 </Field>
-                <div className="flex min-w-0 flex-col gap-1 sm:col-span-2">
+                <div className={cn('flex min-w-0 flex-col gap-1 sm:col-span-2', unmatchedOnly && 'hidden')}>
                   <span className="text-[12px] font-medium text-ink-2">Product</span>
                   <ProductPicker label="Product" multiple={false} value={form.product_id} onChange={(next) => update({ product_id: next })} />
                 </div>

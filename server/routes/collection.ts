@@ -5,7 +5,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { placeholders, type SqlValue } from '../db/sqlite.ts';
-import { badRequest, notFound } from '../lib/errors.ts';
+import { badRequest, notFound, unprocessable } from '../lib/errors.ts';
 import { idList, idParam, likePattern, optBool, paged, pagination, parse, strList } from '../lib/http.ts';
 import { isIsoDate, addDays } from '../lib/time.ts';
 import { audit } from '../services/core.ts';
@@ -14,7 +14,8 @@ import { describeConnectors } from '../services/collection/registry.ts';
 import { cancelJob, engine, enqueueJob, enqueueRetry, startJob, testRetailer } from '../services/collection/runner.ts';
 import { runSchedulerTick } from '../services/collection/scheduler.ts';
 import { getJob, JOB_SELECT, LOG_SELECT, mapJob, mapLog } from '../services/collection/sources.ts';
-import type { CollectionJob, CollectionJobDetail, CollectionLog } from '../../shared/api/collection.ts';
+import { checkSite } from '../services/collection/web.ts';
+import type { CollectionJob, CollectionJobDetail, CollectionLog, SiteCheckResult } from '../../shared/api/collection.ts';
 
 const JOB_STATUSES = ['queued', 'running', 'succeeded', 'partial', 'failed', 'not_configured', 'cancelled'];
 const SOURCE_STATUSES = ['healthy', 'failing', 'not_configured', 'paused', 'manual', 'simulated', 'pending'];
@@ -64,6 +65,19 @@ export default async function collectionRoutes(app: FastifyInstance) {
   });
 
   app.get('/collection/connectors', async () => ({ rows: describeConnectors() }));
+
+  /**
+   * POST /api/collection/site-check { url } — can this product page be read directly? Requests robots.txt and, only
+   * if it allows the page, the page itself (once), the way permitted website extraction would. Stores nothing.
+   */
+  app.post('/collection/site-check', { config: { permission: 'sources.manage' } }, async (req): Promise<SiteCheckResult> => {
+    const body = parse(z.object({ url: z.string().trim().url('Enter the full address of a product page, starting with https://').max(2000) }), req.body);
+    const url = new URL(body.url);
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') throw unprocessable('Enter a web address starting with http:// or https://');
+    const result = await checkSite(ctx, url.toString());
+    audit(ctx, req.user, 'collection.site_checked', 'site', url.host, { verdict: result.verdict, robots: result.robots.status, page: result.page?.outcome ?? null }, req.ip);
+    return result;
+  });
 
   app.get('/collection/retailers/:id/status', async (req) => {
     return sourceConfigStatus(ctx, idParam((req.params as { id: string }).id, 'retailer id'));

@@ -80,7 +80,7 @@ describe('default alert rules', () => {
     const rules = t.ctx.db.all<{ type: string; is_enabled: number; is_demo: number; threshold_pct: number | null; threshold_count: number | null; severity: string }>(
       'SELECT type, is_enabled, is_demo, threshold_pct, threshold_count, severity FROM alert_rules ORDER BY id',
     );
-    assert.equal(rules.length, 8);
+    assert.equal(rules.length, 9);
     assert.deepEqual([...new Set(rules.map((r) => r.type))].sort(), [...ALERT_TYPES].sort());
     assert.ok(rules.every((r) => r.is_demo === 0));
     const byType = Object.fromEntries(rules.map((r) => [r.type, r]));
@@ -92,6 +92,10 @@ describe('default alert rules', () => {
     // the catch-all "any selling price change" rule is opt-in
     assert.equal(byType.price_change!.is_enabled, 0);
     assert.equal(byType.price_change!.severity, 'info');
+    // newly found products: informational, from the first new listing of a run
+    assert.equal(byType.new_listing!.threshold_count, 1);
+    assert.equal(byType.new_listing!.severity, 'info');
+    assert.equal(byType.new_listing!.is_enabled, 1);
   });
 });
 

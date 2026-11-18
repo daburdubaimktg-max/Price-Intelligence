@@ -35,9 +35,20 @@ export interface IngestedSummary {
   alertMaxAgeHours: number;
 }
 
+/** Listings a collection run found at its source that were not known before (stored as unmatched, for review). */
+export interface DiscoveredSummary {
+  jobId: number;
+  retailerId: number;
+  listingIds: number[];
+  sourceMethod: string;
+  isDemo: boolean;
+}
+
 /** Extension points so services stay decoupled (the alert engine subscribes to ingestion, etc.). */
 export interface AppHooks {
   observationsIngested: Array<(summary: IngestedSummary) => void>;
+  /** Fired after a run stored newly found listings and their first observations. */
+  listingsDiscovered: Array<(summary: DiscoveredSummary) => void>;
   collectionJobFinished: Array<(jobId: number) => void>;
   /** Fired by the scheduler roughly once a minute; subscribers throttle their own periodic work. */
   schedulerTick: Array<(now: Date) => void>;
@@ -66,7 +77,7 @@ export interface AuthUser {
 }
 
 export function createHooks(): AppHooks {
-  return { observationsIngested: [], collectionJobFinished: [], schedulerTick: [] };
+  return { observationsIngested: [], listingsDiscovered: [], collectionJobFinished: [], schedulerTick: [] };
 }
 
 /** Runs every subscriber; one failing subscriber never breaks the caller or the others. */

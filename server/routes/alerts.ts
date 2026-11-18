@@ -160,6 +160,10 @@ function validateRule(ctx: AppContext, v: RuleValues): RuleValues {
   if (v.type === 'collection_failed' && (v.brand_id !== null || v.category_id !== null || v.product_id !== null)) {
     throw unprocessable('A collection rule can only be scoped by market or retailer');
   }
+  if (v.type === 'new_listing' && (v.category_id !== null || v.product_id !== null)) {
+    // A newly found listing is not matched to a product yet, so its product and product type are unknown.
+    throw unprocessable('A new-product rule can only be scoped by market, retailer or brand');
+  }
   if (v.retailer_id !== null && v.market_id !== null) {
     const retailer = ctx.db.get<{ market_id: number }>('SELECT market_id FROM retailers WHERE id = ?', [v.retailer_id]);
     if (retailer && retailer.market_id !== v.market_id) throw reject('retailer_id', 'does not belong to the selected market');

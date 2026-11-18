@@ -128,6 +128,7 @@ export const ALERT_TYPES = [
   'price_increase',
   'collection_failed',
   'stale_observation',
+  'new_listing',
 ] as const;
 export type AlertType = (typeof ALERT_TYPES)[number];
 
@@ -184,6 +185,14 @@ export const ALERT_TYPE_INFO: Record<AlertType, { label: string; description: st
     description: 'A listing has no observation within the expected timeframe (derived from the source frequency unless an explicit number of hours is set).',
     threshold: 'hours',
     thresholdLabel: 'Maximum age (hours, optional)',
+  },
+  new_listing: {
+    label: 'New product found at a retailer',
+    description:
+      'A collection run finds listings at a retailer that were not there before (one alert per run). The first load of a retailer, or of a brand at a retailer, is a baseline and does not alert.',
+    threshold: 'count',
+    thresholdLabel: 'Minimum new listings in one run',
+    defaultThreshold: 1,
   },
 };
 

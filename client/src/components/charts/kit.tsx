@@ -210,7 +210,8 @@ export function ChartFrame({
           <div className="text-[13.5px] leading-5 font-semibold text-ink">{title}</div>
           {subtitle ? <div className="mt-0.5 text-[12px] leading-4 text-ink-3">{subtitle}</div> : null}
         </div>
-        <div className="no-print flex shrink-0 flex-wrap items-center gap-2">
+        {/* max-w-full: on a narrow card the controls wrap inside it instead of widening the page */}
+        <div className="no-print flex max-w-full min-w-0 flex-wrap items-center gap-2">
           {actions}
           {table && !empty ? (
             <IconButton

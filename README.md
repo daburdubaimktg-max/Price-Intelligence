@@ -10,7 +10,8 @@ history into monitoring, comparisons, promotion analysis, alerts and reports.
 | --- | --- |
 | Overview | Headline figures, price movement, own vs competitor position, recent changes, promotions, markets |
 | Live Price Monitor | Latest price, unit price, promotion, deal tags, availability and freshness of every listing |
-| Deals | Listings on offer right now — tagged deals, promotions and prices below the regular price — with the context of their own history (30-day average, 90-day low, on deal since) |
+| Deals | Listings on offer right now — tagged deals, promotions and prices below the regular price — with the context of their own history (30-day average, 90-day low, on deal since). Above the list, the comparison: how much of each range is on offer and how deep, own brands beside competitors, by brand, product range, retailer and market; brand × retailer and brand × kind of offer; the last 30 days |
+| New Products | Listings that appeared at a retailer after its first load: possible launches, kept apart from known products that reached another retailer |
 | Product Catalogue | Products, variants, brands, categories, CSV / Excel import, listing matching, competitor mappings |
 | Brand Explorer | Brand by brand: the range, a price matrix across retailers and markets, the trend, and the brands it competes with |
 | Competitor Intelligence | Own product vs mapped competitors: prices, price per 100 ml / 100 g, gaps, history |
@@ -148,6 +149,29 @@ evidence, records why each listing was matched to its product, and raises no ale
 listing. `--dry-run` reports what would happen and stores nothing. The file format is documented at the top of
 `server/services/catalogue-load.ts`.
 
+**New products.** A feed, API or provider source with *Add unknown items as unmatched listings* switched on
+stores the items it does not know as unmatched listings. *New Products* lists what was first seen in the last 7, 30
+or 90 days. A listing counts as new only if it was first seen more than 48 hours after the first listing of its
+retailer and, where its brand is known, of that brand at that retailer: a first load is a baseline, not a launch.
+*New product* means nothing says the product was on sale anywhere before; *new at a retailer* means it was already
+listed elsewhere. The brand of an unmatched listing is recognised from the retailer's title or page address — a
+guess that is not stored and matches nothing. Nothing is matched or created automatically; review happens in
+*Product Catalogue → Matching*.
+
+**Adding a platform.** *Administration → Retailers & listings → Check a site* answers the first question about a
+new retailer: can its product pages be read directly, at no cost? It reads the site's `robots.txt`, requests one
+product page only if that allows it, and reports what it found — readable directly, opens but shows no readable
+price, does not answer automated visits, or ruled out by the site's own rules. It never tries to get past a
+verification page, and it says what is technically possible, not what the retailer's terms permit. Then *Add
+retailer*, choose how prices arrive, and switch on discovery so its range is found.
+
+**Planning what collection costs.** *Data Collection Centre → Cost planner* multiplies each platform's number of
+products by how often they are checked and by the provider price entered for it, and shows the plan beside what
+daily collection of everything would cost. Existing platforms come with their real number of listings and current
+schedule; planned platforms can be added to see what growing would cost. Enter what a provider charges per 1,000
+items once in the source's settings ("Provider price per 1,000 items") and the planner starts from it. It is a
+calculator: this system neither pays nor measures provider charges, and the plan is kept in the browser only.
+
 **Collection rules built in**
 
 - `robots.txt` is fetched and obeyed on every website-extraction run; disallowed pages are skipped and logged.
@@ -221,6 +245,10 @@ availability change links to the observation that caused it.
 
 In-app notifications need nothing. E-mail needs an SMTP server and a webhook needs a URL — both are set, and can
 be tested for real, in *Administration → Integrations*. Until then they are shown as not configured.
+
+*New product found at a retailer* — one alert per collection run that found new listings (count, recognised
+brands, first titles), never for a first load or a demo source. Scope it by market, retailer or brand and set a
+minimum number of listings per run. Existing installations receive the default rule with migration 003.
 
 ---
 
@@ -372,13 +400,20 @@ The suite covers the ledger guarantees, ingestion and de-duplication, catalogue 
 the collection engine (against local fixture servers), provider snapshots with tags, the bulk catalogue load, deal
 tags and the Deals and Brand Explorer figures, alerts, administration, analytics against hand-computed figures,
 reports, the assistant, access control and security headers, the demo dataset's labelling and removal, and the
-clean-up of the database copy that a public snapshot ships with.
+clean-up of the database copy that a public snapshot ships with, new-product detection (baseline rule, brand
+recognition, the alert of a collection run) and the site check.
 
 ## Known limits
 
 - Website extraction does not execute JavaScript (see above).
+- Brands have no alternative spellings yet: a title that names a brand only in Arabic is recognised from the page
+  address where it contains the name, otherwise not at all.
+- A platform has one collection schedule. Checking its key products more often than the rest (two speeds within
+  one platform) is not built; the cost planner therefore plans one pace per platform.
 - No retailer integration is pre-configured; each needs the access and credentials described above.
-- Price context on the Deals page (30-day average, 90-day low) needs history: it fills in as days are collected.
+- Price context on the Deals page (30-day average, 90-day low) and its 30-day trend need history: they fill in as
+  days are collected. Shares in the comparison are measured against the listings that were observed with a fresh
+  price, so a retailer that was not collected recently drops out of them instead of counting as "no offers".
 - Listings are matched to the same product on a barcode, on the retailer's own item id across its country sites, or
   on brand, product type, pack size and identical name words. Products that retailers describe differently stay
   separate until a person matches them.

@@ -1,6 +1,7 @@
 /**
  * Response types of the Deals API (GET /api/deals): listings that are on offer right now, with the price
- * context of their own stored history. Types only, plus the list of sort keys.
+ * context of their own stored history — and of the comparison built on the same deals (GET /api/deals/compare).
+ * Types only, plus the list of sort keys and the discount bands.
  */
 import type { Availability, DataClass, DealTag, Ownership, PromoType } from '../constants.ts';
 import type { DemoNote } from './analytics.ts';
@@ -164,4 +165,111 @@ export interface DealsResponse {
   page_size: number;
   pages: number;
   summary: DealsSummary;
+}
+
+// ---- comparison (GET /api/deals/compare) -------------------------------------------------------------------
+
+/**
+ * Discount bands of the comparison, shallowest first. A deal is counted in exactly one band by its discount
+ * against the regular price (`min` inclusive, `max` exclusive); the first band holds offers without a lower
+ * shelf price (an offer tag, coupon or multi-buy offer only).
+ */
+export const DEAL_DISCOUNT_BANDS = [
+  { key: 'none', label: 'Offer without a price cut', short: 'No price cut', min: null, max: null },
+  { key: 'lt10', label: 'Under 10% off', short: '< 10%', min: 0, max: 10 },
+  { key: '10_20', label: '10 to under 20% off', short: '10–20%', min: 10, max: 20 },
+  { key: '20_30', label: '20 to under 30% off', short: '20–30%', min: 20, max: 30 },
+  { key: '30_50', label: '30 to under 50% off', short: '30–50%', min: 30, max: 50 },
+  { key: '50_plus', label: '50% off or more', short: '50% +', min: 50, max: null },
+] as const;
+
+/**
+ * How much of a range is on offer. The range is every active listing in the selection whose latest observation
+ * is fresh and has a price — on offer or not — so brands and retailers of different sizes can be compared.
+ */
+export interface DealShare {
+  /** Listings in the range (the base of `share_pct`). */
+  listings: number;
+  /** Of those, the listings on offer, with every deal filter of the request applied. */
+  deals: number;
+  /** deals / listings in %. Null without listings. */
+  share_pct: number | null;
+  /** Average / deepest discount against the regular price among the deals that have a price cut, in %. */
+  avg_discount_pct: number | null;
+  max_discount_pct: number | null;
+}
+
+export interface DealCompareBrand extends DealShare {
+  brand_id: number | null;
+  brand_name: string;
+  ownership: Ownership | null;
+  median_discount_pct: number | null;
+  /** Deals per entry of DEAL_DISCOUNT_BANDS, in the same order. */
+  bands: number[];
+  /** Deals carrying each tag (a deal can carry several). */
+  tags: Record<DealTag, number>;
+}
+
+/** One product range, retailer or market, with own brands and competitors side by side. */
+export interface DealCompareGroup {
+  /** Value for the matching filter of GET /api/deals (category_id, retailer_id or market_id). */
+  id: number;
+  name: string;
+  /** Parent category of a range; market code of a retailer; null for markets. */
+  note: string | null;
+  all: DealShare;
+  own: DealShare;
+  competitor: DealShare;
+}
+
+export interface DealCompareCell extends DealShare {
+  brand_id: number | null;
+  retailer_id: number;
+}
+
+export interface DealTrendPoint {
+  /** Market-local calendar day. */
+  date: string;
+  /** Listings with a priced observation on that day, and how many of them were on offer (by the last observation of the day). */
+  listings: number;
+  deals: number;
+  share_pct: number | null;
+  avg_discount_pct: number | null;
+}
+
+export interface DealTrendSeries {
+  brand_id: number | null;
+  brand_name: string;
+  ownership: Ownership | null;
+  points: DealTrendPoint[];
+}
+
+/**
+ * The deals of a selection as a comparison: who has how much of the range on offer, how deep, where, and how
+ * that moved. Percentages and counts only — prices in different currencies are never combined.
+ */
+export interface DealsComparison {
+  totals: { all: DealShare; own: DealShare; competitor: DealShare };
+  /** Brands with listings in the selection, largest range first (at most 40). */
+  brands: DealCompareBrand[];
+  /** Brands in the selection that are not listed because of that limit. */
+  brands_omitted: number;
+  /** Product ranges: the subcategory of a product, or its category when it has none. */
+  ranges: DealCompareGroup[];
+  retailers: DealCompareGroup[];
+  markets: DealCompareGroup[];
+  /** Brand × retailer, for the listed brands; pairs without listings are absent. */
+  cells: DealCompareCell[];
+  trend: {
+    /** First and last market-local day of the window (the last 30 days). */
+    from: string;
+    to: string;
+    /** Days in the window on which anything in the selection was observed. */
+    observed_days: number;
+    series: DealTrendSeries[];
+    /** Deal filters of the request that the daily figures cannot apply (e.g. "90-day low only"). */
+    not_applied: string[];
+  };
+  latest_observation_at: string | null;
+  demo: DemoNote;
 }

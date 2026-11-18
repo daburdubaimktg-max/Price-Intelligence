@@ -22,7 +22,8 @@ import {
   DEAL_BADGE_TAGS, DEAL_OFFER_TAGS, DEAL_TAG_DESCRIPTIONS, DEAL_TAG_LABELS, DEAL_TAGS, dealTagFromLabel, isPriceCutWording, normaliseDealTags, parseDealTags,
   type DealTag, type RoleKey,
 } from '../shared/constants.ts';
-import type { DealRow, DealsResponse } from '../shared/api/deals.ts';
+import type { DealRow, DealsComparison, DealShare, DealsResponse } from '../shared/api/deals.ts';
+import { discountBandIndex } from '../server/services/analytics/deals.ts';
 
 let t: TestApp;
 let fx: Fixture;
@@ -631,6 +632,89 @@ describe('deals', () => {
     assert.deepEqual(summary.demo, { demo_rows: 0, total_rows: 3, all_demo: false, any_demo: false });
     // no figure in the summary adds up or averages prices
     assert.ok(!JSON.stringify(summary).includes('avg_price') && !('total_value' in summary));
+  });
+
+  // ---- comparison (GET /api/deals/compare) ------------------------------------------------------------------
+  const share = (listings: number, dealCount: number, avg: number | null = null, max: number | null = null): DealShare => ({
+    listings, deals: dealCount, share_pct: listings ? Math.round((dealCount / listings) * 1000) / 10 : null, avg_discount_pct: avg, max_discount_pct: max,
+  });
+
+  it('compares the same deals as shares of the fresh, priced range — by brand, product range, retailer and market', async () => {
+    const c: DealsComparison = await get(`/deals/compare?${scope}`, 'viewer');
+    // range: A, B, C, D. Not in it: E (stale) and the feed's rival listing (never observed).
+    assert.deepEqual(c.totals, { all: share(4, 3, 25, 30), own: share(2, 2, 25, 30), competitor: share(2, 1) });
+    assert.deepEqual(c.brands, [
+      // A is 30% off (band "30 to under 50"), C 20% off (band "20 to under 30")
+      { brand_id: dm.ownBrandId, brand_name: 'Test Own', ownership: 'own', ...share(2, 2, 25, 30), median_discount_pct: 25, bands: [0, 0, 0, 1, 1, 0], tags: tagCounts({ limited_time_deal: 1, best_seller: 1 }) },
+      // B is an offer without a price cut (coupon); D carries a badge only and is not a deal
+      { brand_id: dm.compBrandId, brand_name: 'Test Rival', ownership: 'competitor', ...share(2, 1), median_discount_pct: null, bands: [1, 0, 0, 0, 0, 0], tags: tagCounts({ coupon: 1 }) },
+    ]);
+    assert.equal(c.brands_omitted, 0);
+    assert.deepEqual(c.ranges, [{ id: dm.categoryId, name: 'Hair Oil', note: null, all: share(4, 3, 25, 30), own: share(2, 2, 25, 30), competitor: share(2, 1) }]);
+    assert.deepEqual(c.retailers, [
+      { id: dm.retailerId, name: 'Deal Mart', note: 'AE', all: share(2, 2, 30, 30), own: share(1, 1, 30, 30), competitor: share(1, 1) },
+      { id: sa.retailerId, name: 'Deal Mart', note: 'SA', all: share(2, 1, 20, 20), own: share(1, 1, 20, 20), competitor: share(1, 0) },
+    ]);
+    // equal in size, so by name: Saudi Arabia before United Arab Emirates
+    assert.deepEqual(c.markets.map((m) => [m.id, m.all.listings, m.all.deals, m.own.share_pct, m.competitor.share_pct]), [
+      [sa.marketId, 2, 1, 100, 0],
+      [dm.marketId, 2, 2, 100, 100],
+    ]);
+    const cell = (brandId: number, retailerId: number) => c.cells.find((x) => x.brand_id === brandId && x.retailer_id === retailerId);
+    assert.equal(c.cells.length, 4);
+    assert.deepEqual(cell(dm.ownBrandId, dm.retailerId), { brand_id: dm.ownBrandId, retailer_id: dm.retailerId, ...share(1, 1, 30, 30) });
+    assert.deepEqual(cell(dm.compBrandId, sa.retailerId), { brand_id: dm.compBrandId, retailer_id: sa.retailerId, ...share(1, 0) });
+    assert.equal(c.latest_observation_at, known.at(1));
+    // every deal sits in exactly one band, and the deals are those of the list
+    const list: DealsResponse = await get(`/deals?${scope}&page_size=1`);
+    assert.equal(c.brands.reduce((n, b) => n + b.bands.reduce((a, x) => a + x, 0), 0), list.total);
+    assert.equal(c.totals.all.deals, list.total);
+    // counts and percentages only: no price or currency field anywhere ("lowest_price" is the name of a tag)
+    assert.ok(!/"[a-z0-9_]*(current_price|regular_price|unit_price|avg_price|currency|amount)[a-z0-9_]*":/.test(JSON.stringify(c)));
+    assert.equal(discountBandIndex(null), 0);
+    assert.deepEqual([0.5, 9.99, 10, 29.99, 30, 49.9, 50, 80].map(discountBandIndex), [1, 1, 2, 3, 4, 4, 5, 5]);
+  });
+
+  it('draws the daily trend from the last observation of each market-local day', async () => {
+    const c: DealsComparison = await get(`/deals/compare?${scope}`);
+    assert.equal(c.trend.to, known.date(1));
+    assert.equal(c.trend.observed_days, 9);
+    assert.deepEqual(c.trend.not_applied, []);
+    const points = (brandId: number) => Object.fromEntries(c.trend.series.find((s) => s.brand_id === brandId)!.points.map((p) => [p.date, [p.listings, p.deals, p.share_pct, p.avg_discount_pct]]));
+    const own = points(dm.ownBrandId);
+    assert.deepEqual(own[known.date(9)], [1, 0, 0, null]);
+    assert.deepEqual(own[known.date(5)], [1, 1, 100, 10], 'a plain price cut');
+    assert.deepEqual(own[known.date(4)], [2, 1, 50, 50], 'the feed offer counted on the day it was seen, although it is stale today');
+    assert.deepEqual(own[known.date(2)], [2, 1, 50, 20]);
+    assert.deepEqual(own[known.date(1)], [2, 2, 100, 25]);
+    const rival = points(dm.compBrandId);
+    assert.deepEqual(Object.keys(rival).sort(), [known.date(5), known.date(3), known.date(1)].sort());
+    assert.deepEqual(rival[known.date(1)], [2, 1, 50, null], 'a coupon is an offer without a discount; a badge is not an offer');
+  });
+
+  it('applies the deal filters to the comparison and says which one the trend cannot apply', async () => {
+    const tagged: DealsComparison = await get(`/deals/compare?${scope}&tag=limited_time_deal`);
+    assert.deepEqual(tagged.totals, { all: share(4, 1, 30, 30), own: share(2, 1, 30, 30), competitor: share(2, 0) });
+    const ownTrend = tagged.trend.series.find((s) => s.brand_id === dm.ownBrandId)!.points;
+    assert.deepEqual(ownTrend.filter((p) => p.deals > 0).map((p) => p.date), [known.date(1)], 'only the day with the limited-time deal');
+
+    const deep: DealsComparison = await get(`/deals/compare?${scope}&min_discount=25`);
+    assert.deepEqual(deep.totals.all, share(4, 1, 30, 30));
+    assert.deepEqual(deep.trend.series.find((s) => s.brand_id === dm.ownBrandId)!.points.filter((p) => p.deals > 0).map((p) => p.date), [known.date(4), known.date(1)]);
+
+    const low: DealsComparison = await get(`/deals/compare?${scope}&lowest_only=true`);
+    assert.deepEqual(low.totals.all, share(4, 1, 30, 30));
+    assert.deepEqual(low.trend.not_applied, ['90-day low only']);
+
+    const withStale: DealsComparison = await get(`/deals/compare?${scope}&include_stale=true`);
+    assert.deepEqual([withStale.totals.all.listings, withStale.totals.all.deals], [5, 4], 'stale listings join the range and the deals together');
+
+    const ownOnly: DealsComparison = await get(`/deals/compare?${scope}&ownership=own`);
+    assert.deepEqual(ownOnly.brands.map((b) => b.brand_name), ['Test Own']);
+    assert.deepEqual(ownOnly.totals.competitor, share(0, 0));
+
+    assert.equal((await t.api('GET', `/deals/compare?${scope}&min_discount=140`)).status, 400);
+    assert.equal((await t.api('GET', `/deals/compare?${scope}`, { as: null })).status, 401);
   });
 
   it('filters by tag, discount, 90-day low, ownership, brand, market, product and search text', async () => {

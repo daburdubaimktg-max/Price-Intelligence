@@ -934,6 +934,10 @@ const CONFIG_FIELDS: ConnectorConfigField[] = [
   { key: 'discover_listings', label: 'Add unknown items as unmatched listings', type: 'boolean', group: 'Listing discovery', default: false, help: 'New items are never matched automatically — they wait for review in Product Catalogue → Matching.', show_if: { key: 'mode', in: ['bulk'] } },
   { key: 'discover_limit', label: 'Maximum new listings per run', type: 'number', group: 'Listing discovery', default: 200, show_if: { key: 'discover_listings', in: [true] } },
   { key: 'timeout_ms', label: 'Request timeout (ms)', type: 'number', group: 'Request', default: 30000 },
+  {
+    key: 'cost_per_1000', label: 'Provider price per 1,000 items (USD)', type: 'number', group: 'Cost planning', placeholder: '0.50',
+    help: 'What your data provider charges per 1,000 items it returns. Only used by the cost planner in the Data Collection Centre; this system does not pay or measure provider charges.',
+  },
 ];
 
 const EXAMPLES: Record<'official_api' | 'product_feed' | 'third_party', ConnectorExample[]> = {

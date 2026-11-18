@@ -15,7 +15,7 @@ import * as cheerio from 'cheerio';
 import robotsParserModule from 'robots-parser';
 import type { AppContext } from '../../context.ts';
 import type { Availability, CollectionMethod } from '../../../shared/constants.ts';
-import type { ConnectorConfigField, ConnectorDescription } from '../../../shared/api/collection.ts';
+import type { ConnectorConfigField, ConnectorDescription, SiteCheckResult } from '../../../shared/api/collection.ts';
 import { sha256Hex } from '../../lib/crypto.ts';
 import { NetError, readBody, safeFetch } from '../../lib/net.ts';
 import {
@@ -439,6 +439,8 @@ export function extractFromHtml(
   retailer: Pick<SourceRetailer, 'currency_code'>,
   config: WebConfig,
   currencies: ReadonlySet<string> = new Set(),
+  /** `anyCurrency`: do not require the page's currency to be the retailer's (used when no retailer exists yet). */
+  options: { anyCurrency?: boolean } = {},
 ): { extraction: Extraction } | { failure: { code: string; message: string } } {
   let $: Dom;
   try {
@@ -455,7 +457,7 @@ export function extractFromHtml(
     else if (strategy === 'selector') found = extractSelector($, config, currencies);
     else found = extractRegex(html, config, currencies);
     if (!found) continue;
-    if (found.currency && found.currency !== retailer.currency_code) {
+    if (!options.anyCurrency && found.currency && found.currency !== retailer.currency_code) {
       return {
         failure: {
           code: 'currency_mismatch',
@@ -742,3 +744,143 @@ export const webConnector: Connector = {
 
   collect: collectWeb,
 };
+
+// ---------------------------------------------------------------------------------------------
+// Site check: can one product page be read directly?
+// ---------------------------------------------------------------------------------------------
+
+const DIRECT_NEXT_STEPS = [
+  'Add the retailer with the method “Permitted website extraction”, give each listing its product page address, and confirm there that the site’s terms permit this access.',
+  'One page says little about a whole site: run “Test connection” on the retailer before relying on it.',
+];
+const OTHER_ROUTES = 'Other routes: a feed or API from the retailer, or a data provider that is entitled to the data (method “Third-party data integration”).';
+
+/**
+ * Requests robots.txt and — only if it allows the page — the page itself, once, exactly as permitted website
+ * extraction would, and reports whether a price can be read from it. Nothing is stored.
+ */
+export async function checkSite(ctx: AppContext, rawUrl: string, signal: AbortSignal = new AbortController().signal): Promise<SiteCheckResult> {
+  const url = new URL(rawUrl);
+  const userAgent = ctx.config.userAgent;
+  const base = { url: url.toString(), host: url.host, checked_at: new Date().toISOString() };
+  const robots = await loadRobots(ctx, url.origin, userAgent, 1000, signal);
+  const crawlDelay = robots.crawlDelayMs > 0 ? Math.round(robots.crawlDelayMs / 100) / 10 : null;
+
+  if (robots.blocked) {
+    return {
+      ...base,
+      robots: { status: 'unreadable', detail: `${robots.blocked}.`, crawl_delay_s: null },
+      page: null,
+      verdict: 'not_permitted',
+      advice: ['The site’s rules for automated visitors (robots.txt) could not be read, so the page was not requested. This system treats that as “not permitted”.', OTHER_ROUTES],
+    };
+  }
+  if (robots.rules && robots.rules.isDisallowed(url.toString(), userAgent) === true) {
+    return {
+      ...base,
+      robots: { status: 'disallowed', detail: `robots.txt of ${url.host} does not allow automated access to this page.`, crawl_delay_s: crawlDelay },
+      page: null,
+      verdict: 'not_permitted',
+      advice: ['The site’s robots.txt rules out automated visits to this page, so it was not requested and cannot be collected directly.', OTHER_ROUTES],
+    };
+  }
+  const robotsInfo: SiteCheckResult['robots'] = {
+    status: robots.rules ? 'allowed' : 'none',
+    detail: robots.rules ? `robots.txt of ${url.host} allows automated access to this page.` : `${url.host} has no robots.txt.`,
+    crawl_delay_s: crawlDelay,
+  };
+  const emptyPage = { price: null, regular_price: null, currency: null, availability: null, read_from: null };
+  const blocked = (page: NonNullable<SiteCheckResult['page']>, why: string): SiteCheckResult => ({
+    ...base,
+    robots: robotsInfo,
+    page,
+    verdict: 'blocked',
+    advice: [`${why} This system does not try to get past such checks, so this site cannot be collected directly from here.`, OTHER_ROUTES],
+  });
+
+  let fetched: { status: number; body: string; contentType: string };
+  try {
+    fetched = await hostThrottled(
+      url.host,
+      Math.max(1000, robots.crawlDelayMs),
+      async () => {
+        const res = await safeFetch(ctx, url.toString(), { timeoutMs: 20_000, headers: { accept: 'text/html,application/xhtml+xml;q=0.9,*/*;q=0.5', 'accept-language': 'en' } });
+        if (!res.ok) {
+          await res.body?.cancel().catch(() => undefined);
+          return { status: res.status, body: '', contentType: '' };
+        }
+        return { status: res.status, body: await readBody(res, 5 * 1024 * 1024), contentType: res.headers.get('content-type') ?? '' };
+      },
+      signal,
+    );
+  } catch (err) {
+    if ((err as Error).message === 'aborted') throw err;
+    const reason = err instanceof NetError ? err.message : (err as Error).message;
+    return blocked({ http_status: null, outcome: 'error', detail: `The page could not be fetched: ${reason}.`, ...emptyPage }, 'The site did not answer the request.');
+  }
+
+  if (fetched.status === 401 || fetched.status === 403) {
+    return blocked({ http_status: fetched.status, outcome: 'refused', detail: `The site refused access to the page (HTTP ${fetched.status}).`, ...emptyPage }, 'The site refuses automated visits.');
+  }
+  if (fetched.status === 429) {
+    return blocked({ http_status: 429, outcome: 'rate_limited', detail: 'The site is rate limiting requests (HTTP 429).', ...emptyPage }, 'The site is limiting automated requests.');
+  }
+  if (fetched.status === 404 || fetched.status === 410) {
+    return {
+      ...base,
+      robots: robotsInfo,
+      page: { http_status: fetched.status, outcome: 'not_found', detail: `There is no page at this address (HTTP ${fetched.status}).`, ...emptyPage },
+      verdict: 'needs_setup',
+      advice: ['The address does not lead to a product page. Check it with the address of a product that is on sale now.'],
+    };
+  }
+  if (fetched.status >= 400) {
+    return blocked({ http_status: fetched.status, outcome: 'error', detail: `The site answered with HTTP ${fetched.status}.`, ...emptyPage }, 'The site answered with an error.');
+  }
+  if (fetched.contentType && !/html|xml|text\/plain/i.test(fetched.contentType)) {
+    return {
+      ...base,
+      robots: robotsInfo,
+      page: { http_status: fetched.status, outcome: 'not_a_page', detail: `The address returned “${fetched.contentType.split(';')[0]}” instead of a web page.`, ...emptyPage },
+      verdict: 'needs_setup',
+      advice: ['This address is not a product page. If it is a feed or an API, use the method “Product feed” or “Official API” for it instead.'],
+    };
+  }
+
+  const { config } = readWebConfig({});
+  const listing = { id: 0, external_id: null, url: url.toString(), title: null, gtin: null } as unknown as SourceListing;
+  const currencies = new Set(ctx.db.all<{ code: string }>('SELECT code FROM currencies').map((c) => c.code));
+  const result = extractFromHtml(fetched.body, listing, { currency_code: '' }, config, currencies, { anyCurrency: true });
+  if ('extraction' in result) {
+    const e = result.extraction;
+    return {
+      ...base,
+      robots: robotsInfo,
+      page: {
+        http_status: fetched.status,
+        outcome: 'price_found',
+        detail: `A price was read from ${STRATEGY_LABEL[e.strategy]}.`,
+        price: e.current,
+        regular_price: e.regular,
+        currency: e.currency,
+        availability: e.availability,
+        read_from: STRATEGY_LABEL[e.strategy],
+      },
+      verdict: 'direct',
+      advice: ['This page can be read directly, at no cost: the price is in the page itself and the site’s rules allow automated visits to it.', ...DIRECT_NEXT_STEPS],
+    };
+  }
+  if (result.failure.code === 'bot_challenge') {
+    return blocked({ http_status: fetched.status, outcome: 'verification_page', detail: result.failure.message, ...emptyPage }, 'The site showed a verification page instead of the product.');
+  }
+  return {
+    ...base,
+    robots: robotsInfo,
+    page: { http_status: fetched.status, outcome: 'no_price', detail: result.failure.message, ...emptyPage },
+    verdict: 'needs_setup',
+    advice: [
+      'The page opened, but no price could be read from it. Prices that a browser draws with JavaScript are not in the page this system receives.',
+      'If the price is in the page’s HTML, a CSS selector in the source’s settings can read it. Otherwise use a retailer feed, an API or a data provider.',
+    ],
+  };
+}

@@ -14,6 +14,7 @@ const Competitors = lazy(() => import('@/pages/competitors/CompetitorsPage.tsx')
 const HistoryExplorer = lazy(() => import('@/pages/history/HistoryPage.tsx'));
 const Promotions = lazy(() => import('@/pages/promotions/PromotionsPage.tsx'));
 const Deals = lazy(() => import('@/pages/deals/DealsPage.tsx'));
+const NewProducts = lazy(() => import('@/pages/new-products/NewProductsPage.tsx'));
 const Brands = lazy(() => import('@/pages/brands/BrandsPage.tsx'));
 const BrandDetail = lazy(() => import('@/pages/brands/BrandDetailPage.tsx'));
 const Markets = lazy(() => import('@/pages/markets/MarketsPage.tsx'));
@@ -38,6 +39,7 @@ export function App() {
         <Route path="history" element={<HistoryExplorer />} />
         <Route path="promotions" element={<Promotions />} />
         <Route path="deals" element={<Deals />} />
+        <Route path="new-products" element={<NewProducts />} />
         <Route path="brands" element={<Brands />} />
         <Route path="brands/:id" element={<BrandDetail />} />
         <Route path="markets" element={<Markets />} />

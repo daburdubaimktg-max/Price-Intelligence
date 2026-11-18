@@ -1,7 +1,8 @@
 /**
  * Deals (route "/deals"): the listings that are on offer right now, from GET /api/deals — with the tags the
  * retailer shows, the discount against the regular price and, once history has built up, the price against the
- * listing's own 30-day average and 90-day low. Refreshes itself every minute.
+ * listing's own 30-day average and 90-day low — and, above the list, the comparison of those offers by brand,
+ * product range, retailer and market (GET /api/deals/compare). Refreshes itself every minute.
  */
 import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
@@ -15,7 +16,8 @@ import { Button, Card, cn, ErrorState, IconButton, LoadingBlock, PageHeader, Seg
 import { fmtNumber } from '@/lib/format.ts';
 import { fromList, toList, useApiQuery, useIsNarrow } from '@/lib/hooks.ts';
 import { DealsList } from './DealsList.tsx';
-import { DealsByBrand, DealsByRetailer, DealsSummaryStrip } from './DealsSummary.tsx';
+import { DealsCompare } from './DealsCompare.tsx';
+import { DealsSummaryStrip } from './DealsSummary.tsx';
 import { MIN_DISCOUNT_OPTIONS, OWNERSHIP_OPTIONS, SORT_OPTIONS, sortLabel, useDealFilters } from './filters.ts';
 import { TagFilterChips, ToggleChip } from './TagFilter.tsx';
 
@@ -131,21 +133,8 @@ export default function DealsPage() {
             <DealsSummaryStrip summary={summary} onOpenListing={setListingId} />
           </div>
 
-          {/* On narrow screens the list comes first; the breakdowns follow it. */}
-          <div className="order-last grid gap-4 lg:order-none xl:grid-cols-2">
-            <DealsByBrand
-              rows={summary.by_brand}
-              selected={toList(state.brand_id)}
-              onToggle={(id) => filter({ brand_id: fromList(toggleIn(toList(state.brand_id), id)) })}
-              refetching={refetching}
-            />
-            <DealsByRetailer
-              rows={summary.by_retailer}
-              selected={toList(state.retailer_id)}
-              onToggle={(id) => filter({ retailer_id: fromList(toggleIn(toList(state.retailer_id), id)) })}
-              refetching={refetching}
-            />
-          </div>
+          {/* The comparison: who has how much of the range on offer, how deep, where, and how that moved. */}
+          <DealsCompare filters={filters} />
 
           <Card>
             <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-line px-4 py-2.5 text-[12.5px] leading-5 text-ink-3">

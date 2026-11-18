@@ -8,7 +8,7 @@ import { placeholders } from '../db/sqlite.ts';
 import { badRequest } from '../lib/errors.ts';
 import { idList, likePattern, optBool, optNumber, strList } from '../lib/http.ts';
 import { isIsoDate } from '../lib/time.ts';
-import { AVAILABILITY, COLLECTION_METHODS, DATA_CLASSES } from '../../shared/constants.ts';
+import { AVAILABILITY, COLLECTION_METHODS, DATA_CLASSES, DEAL_TAG_LABELS, DEAL_TAGS, isDealTag, type DealTag } from '../../shared/constants.ts';
 
 export interface ObsFilter {
   market_ids?: number[];
@@ -33,6 +33,8 @@ export interface ObsFilter {
   availability?: string[];
   data_classes?: string[];
   source_methods?: string[];
+  /** Observations carrying at least one of these deal tags. */
+  tags?: DealTag[];
   /** Include listings not yet matched to a canonical product (excluded by default). */
   include_unmatched?: boolean;
 }
@@ -59,7 +61,33 @@ export const OBS_RECORD_COLUMNS = `
   o.observed_at, o.observed_basis, o.observed_local_date, o.collected_at, o.source_timestamp,
   o.source_method, o.data_class, o.collection_status, o.confidence, o.evidence_id, o.job_id, o.import_batch_id,
   o.entered_by, o.note, o.is_demo,
+  o.tags, o.tag_text, o.rating, o.review_count, o.sales_rank, o.sales_rank_label, o.seller_name,
   ${UNIT_PRICE_SQL} AS unit_price`;
+
+/** Signal columns of an observation, for queries that build their own column list (alias defaults to `o`). */
+export const obsSignalColumns = (alias = 'o') =>
+  `${alias}.tags, ${alias}.tag_text, ${alias}.rating, ${alias}.review_count, ${alias}.sales_rank, ${alias}.sales_rank_label, ${alias}.seller_name`;
+
+/**
+ * SQL condition: the observation `alias` carries at least one of `tags`. The leading `tags <> '[]'` lets
+ * SQLite use the partial index of tagged observations and skips the JSON work for untagged rows.
+ */
+export function tagCondition(tags: readonly DealTag[], alias = 'o'): { sql: string; params: SqlValue[] } {
+  return {
+    sql: `(${alias}.tags <> '[]' AND EXISTS (SELECT 1 FROM json_each(${alias}.tags) WHERE value IN (${placeholders(tags.length)})))`,
+    params: [...tags],
+  };
+}
+
+/** Reads a `tag=<key,key>` query parameter. Unknown keys are refused, so a typo never widens the result. */
+export function parseTagParam(value: unknown): DealTag[] | undefined {
+  const keys = strList(value)?.map((k) => k.toLowerCase());
+  if (!keys?.length) return undefined;
+  for (const key of keys) {
+    if (!isDealTag(key)) throw badRequest(`Unknown deal tag "${key}". Use one or more of: ${DEAL_TAGS.join(', ')}`);
+  }
+  return DEAL_TAGS.filter((tag) => keys.includes(tag));
+}
 
 export function parseObsFilter(query: Record<string, unknown>): ObsFilter {
   const filter: ObsFilter = {
@@ -95,6 +123,8 @@ export function parseObsFilter(query: Record<string, unknown>): ObsFilter {
   if (classes?.length) filter.data_classes = classes;
   const methods = strList(query.source_method)?.filter((m) => (COLLECTION_METHODS as readonly string[]).includes(m));
   if (methods?.length) filter.source_methods = methods;
+  const tags = parseTagParam(query.tag);
+  if (tags) filter.tags = tags;
   return filter;
 }
 
@@ -172,6 +202,11 @@ export function obsWhere(filter: ObsFilter, extra: { conditions?: string[]; para
   inList('o.availability', filter.availability);
   inList('o.data_class', filter.data_classes);
   inList('o.source_method', filter.source_methods);
+  if (filter.tags?.length) {
+    const tagged = tagCondition(filter.tags);
+    conditions.push(tagged.sql);
+    params.push(...tagged.params);
+  }
   if (extra.conditions?.length) {
     conditions.push(...extra.conditions);
     params.push(...(extra.params ?? []));
@@ -202,5 +237,6 @@ export function describeFilter(filter: ObsFilter, names: { [K in 'markets' | 're
   if (filter.availability?.length) lines.push(`Availability: ${filter.availability.join(', ')}`);
   if (filter.data_classes?.length) lines.push(`Data source class: ${filter.data_classes.join(', ')}`);
   if (filter.source_methods?.length) lines.push(`Source method: ${filter.source_methods.join(', ')}`);
+  if (filter.tags?.length) lines.push(`Deal tags (any of): ${filter.tags.map((tag) => DEAL_TAG_LABELS[tag]).join(', ')}`);
   return lines;
 }

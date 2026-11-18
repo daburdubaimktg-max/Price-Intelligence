@@ -754,21 +754,50 @@ export function mappingProduct(ctx: AppContext, id: number): MappingProduct | un
 }
 
 const SUGGEST_PER_PRODUCT = 8;
+const SUGGEST_PER_PRODUCT_BULK = 3;
+
+export interface SuggestMappingOptions {
+  /** Most suggestions per own product. Default: 8 for one product, 3 when suggesting for the whole catalogue. */
+  perProduct?: number;
+  /** Whole-catalogue runs only: consider own products listed at this many retailers or more. */
+  minRetailers?: number;
+}
 
 /**
  * Proposes competitor mappings for own products (status 'suggested' — a person approves or rejects).
  * Candidates share the own product's subcategory (or, failing that, its category). A pair is proposed as
  * 'equivalent' only when both packs are measured in the same dimension and are within ±15 % of each
  * other; everything else is proposed as 'comparable', i.e. explicitly not equivalent.
+ *
+ * Products that are sold side by side rank first: a price position only exists where an own product and
+ * its competitor are listed at the same retailer. A run over the whole catalogue therefore proposes, for an
+ * own product that is listed somewhere, only competitors that share at least one retailer with it.
  */
-export function suggestCompetitorMappings(ctx: AppContext, ownProductId?: number): { createdIds: number[]; considered: number } {
+export function suggestCompetitorMappings(
+  ctx: AppContext,
+  ownProductId?: number,
+  options: SuggestMappingOptions = {},
+): { createdIds: number[]; considered: number } {
+  const bulk = ownProductId === undefined;
+  const perProduct = Math.max(1, Math.min(20, options.perProduct ?? (bulk ? SUGGEST_PER_PRODUCT_BULK : SUGGEST_PER_PRODUCT)));
   const productSelect = `SELECT p.id, p.name, p.brand_id, b.ownership, p.category_id, p.subcategory_id, c.name AS category_name,
       sc.name AS subcategory_name, p.pack_size, p.pack_unit, p.units_per_pack, p.status, p.is_demo
     FROM products p JOIN brands b ON b.id = p.brand_id JOIN categories c ON c.id = p.category_id
     LEFT JOIN categories sc ON sc.id = p.subcategory_id`;
-  const own = ownProductId
+  const retailersOf = new Map<number, Set<number>>();
+  for (const row of ctx.db.all<{ product_id: number; retailer_id: number }>(
+    `SELECT DISTINCT product_id, retailer_id FROM retailer_listings WHERE product_id IS NOT NULL AND match_status = 'matched' AND is_active = 1`,
+  )) {
+    const set = retailersOf.get(row.product_id);
+    if (set) set.add(row.retailer_id);
+    else retailersOf.set(row.product_id, new Set([row.retailer_id]));
+  }
+  const none = new Set<number>();
+  const allOwn = ownProductId
     ? ctx.db.all<MappingProduct>(`${productSelect} WHERE p.id = ? AND b.ownership = 'own' AND p.status <> 'archived'`, [ownProductId])
     : ctx.db.all<MappingProduct>(`${productSelect} WHERE b.ownership = 'own' AND p.status <> 'archived' ORDER BY p.id`);
+  const minRetailers = bulk ? (options.minRetailers ?? 0) : 0;
+  const own = minRetailers > 0 ? allOwn.filter((o) => (retailersOf.get(o.id)?.size ?? 0) >= minRetailers) : allOwn;
   const competitors = ctx.db.all<MappingProduct>(`${productSelect} WHERE b.ownership = 'competitor' AND p.status <> 'archived' ORDER BY p.id`);
   const existing = new Set(
     ctx.db.all<{ own_product_id: number; competitor_product_id: number }>('SELECT own_product_id, competitor_product_id FROM competitor_mappings').map(
@@ -785,17 +814,28 @@ export function suggestCompetitorMappings(ctx: AppContext, ownProductId?: number
   ctx.db.tx(() => {
     for (const o of own) {
       const sameSub = o.subcategory_id ? competitors.filter((c) => c.subcategory_id === o.subcategory_id) : [];
-      const pool = sameSub.length ? sameSub : competitors.filter((c) => c.category_id === o.category_id);
+      // One product at a time, the wider category is offered when the subcategory has no competitor; a run over the whole
+      // catalogue stays within the subcategory (a hair colour is not proposed against a hair oil).
+      const pool = sameSub.length ? sameSub : bulk ? [] : competitors.filter((c) => c.category_id === o.category_id);
+      const ownRetailers = retailersOf.get(o.id) ?? none;
+      const sharedWith = (c: MappingProduct) => {
+        let n = 0;
+        for (const id of retailersOf.get(c.id) ?? none) if (ownRetailers.has(id)) n++;
+        return n;
+      };
       const proposals = pool
         .filter((c) => !existing.has(`${o.id}:${c.id}`))
-        .map((c) => {
+        .map((c) => ({ c, shared: sharedWith(c) }))
+        // across the whole catalogue: only pairs that can actually be compared at a retailer
+        .filter(({ shared }) => !bulk || ownRetailers.size === 0 || shared > 0)
+        .map(({ c, shared }) => {
           const cmp = comparability(o, c);
           const inSub = !!o.subcategory_id && c.subcategory_id === o.subcategory_id;
           const equivalent = cmp.same_dimension === true && cmp.within_tolerance;
           const spread = cmp.same_dimension && cmp.size_ratio ? Math.max(cmp.size_ratio, 1 / cmp.size_ratio) - 1 : null;
           const closeness = spread === null ? 0 : Math.max(0, 1 - spread);
           const brandLinked = associated.has(`${o.brand_id}:${c.brand_id}`);
-          const score = Math.min(1, 0.45 + (inSub ? 0.2 : 0) + 0.3 * closeness + (brandLinked ? 0.05 : 0));
+          const score = Math.min(1, 0.45 + (inSub ? 0.2 : 0) + 0.3 * closeness + (brandLinked ? 0.05 : 0) + 0.02 * Math.min(shared, 5));
           const scope = inSub ? `Same subcategory (${o.category_name} › ${o.subcategory_name})` : `Same category (${o.category_name})`;
           const la = formatPack(o.pack_size, o.pack_unit, o.units_per_pack);
           const lb = formatPack(c.pack_size, c.pack_unit, c.units_per_pack);
@@ -807,13 +847,16 @@ export function suggestCompetitorMappings(ctx: AppContext, ownProductId?: number
           else size = `size differs ${la} vs ${lb} — not equivalent, compare on price ${cmp.unit_basis}`;
           return {
             competitor: c,
+            shared,
             equivalence: equivalent ? 'equivalent' : 'comparable',
             score: Math.round(score * 100) / 100,
-            rationale: `${scope}; ${size}${brandLinked ? '; brands are benchmarked against each other' : ''}`,
+            rationale:
+              `${scope}; ${size}${brandLinked ? '; brands are benchmarked against each other' : ''}` +
+              (shared > 0 ? `; listed side by side at ${shared} retailer${shared === 1 ? '' : 's'}` : ''),
           };
         })
-        .sort((a, b) => b.score - a.score || a.competitor.id - b.competitor.id)
-        .slice(0, SUGGEST_PER_PRODUCT);
+        .sort((a, b) => b.score - a.score || b.shared - a.shared || a.competitor.id - b.competitor.id)
+        .slice(0, perProduct);
       for (const p of proposals) {
         const id = ctx.db.run(
           `INSERT INTO competitor_mappings (own_product_id, competitor_product_id, market_id, equivalence, status, score, rationale, is_demo, created_at, updated_at)

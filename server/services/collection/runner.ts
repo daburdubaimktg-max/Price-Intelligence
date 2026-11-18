@@ -417,6 +417,7 @@ function persistResult(
   /** For each input: the configured listing it belongs to, or null for a newly discovered listing. */
   const owners: Array<number | null> = [];
   let discoveredCreated = 0;
+  const discoveredListingIds: number[] = [];
 
   const noteFailure = (code: string, message: string, listingId: number) => {
     failed++;
@@ -470,6 +471,7 @@ function persistResult(
         throw err;
       }
       discoveredCreated++;
+      discoveredListingIds.push(listingId);
       if (item.observation) {
         inputs.push({ ...item.observation, listing_id: listingId, evidence_id: evidenceIdFor(item.evidence) });
         owners.push(null);
@@ -494,6 +496,16 @@ function persistResult(
   }
 
   const ingest = ingestObservations(ctx, inputs, { sourceMethod: retailer.collection_method, jobId });
+  if (discoveredListingIds.length > 0) {
+    // After ingestion, so subscribers (the "new product" alert) can read the first observation of each listing.
+    fireHook(ctx, ctx.hooks.listingsDiscovered, {
+      jobId,
+      retailerId: retailer.id,
+      listingIds: discoveredListingIds,
+      sourceMethod: retailer.collection_method,
+      isDemo: !!retailer.is_demo,
+    });
+  }
   const rejected = new Set<number>();
   for (const rejection of ingest.rejected) {
     rejected.add(rejection.index);

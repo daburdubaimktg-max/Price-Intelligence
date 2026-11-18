@@ -5,7 +5,7 @@
  */
 import { useUrlState } from '@/lib/hooks.ts';
 
-export const TAB_KEYS = ['health', 'sources', 'jobs', 'logs', 'imports', 'methods'] as const;
+export const TAB_KEYS = ['health', 'sources', 'jobs', 'logs', 'imports', 'methods', 'planner'] as const;
 export type TabKey = (typeof TAB_KEYS)[number];
 
 export const COLLECTION_DEFAULTS = {

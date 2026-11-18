@@ -1010,6 +1010,85 @@ describe('permitted website extraction', () => {
 // Simulated demo source
 // ---------------------------------------------------------------------------------------------
 
+describe('site check: can a product page be read directly?', () => {
+  const check = (path: string, as: 'admin' | 'analyst' | 'viewer' = 'admin') => t.api('POST', '/collection/site-check', { body: { url: `${fx.origin}${path}` }, as });
+
+  it('says a page can be read directly when its rules allow it and the price is in the page', async () => {
+    const res = await check('/p/jsonld-1');
+    assert.equal(res.status, 200);
+    assert.equal(res.body.verdict, 'direct');
+    assert.equal(res.body.robots.status, 'allowed');
+    assert.deepEqual(
+      { outcome: res.body.page.outcome, price: res.body.page.price, currency: res.body.page.currency, availability: res.body.page.availability, http: res.body.page.http_status },
+      { outcome: 'price_found', price: 12.5, currency: 'AED', availability: 'in_stock', http: 200 },
+    );
+    assert.match(res.body.page.read_from, /structured data/);
+    assert.match(res.body.advice.join(' '), /confirm there that the site’s terms permit/);
+    assert.deepEqual(fx.hits.map((h) => h.path), ['/robots.txt', '/p/jsonld-1'], 'robots.txt first, then the page — once');
+    assert.equal(fx.hits[1]!.headers['user-agent'], t.ctx.config.userAgent, 'it identifies itself honestly');
+    assert.equal(count('SELECT COUNT(*) FROM price_observations'), countBefore, 'a check stores no price');
+  });
+  let countBefore = 0;
+  before(() => {
+    countBefore = count('SELECT COUNT(*) FROM price_observations');
+  });
+
+  it('reads a price in any currency: no retailer exists yet to compare it with', async () => {
+    const res = await check('/p/usd-1');
+    assert.equal(res.body.verdict, 'direct');
+    assert.equal(res.body.page.currency, 'USD');
+  });
+
+  it('does not request a page that robots.txt rules out, or when robots.txt cannot be read', async () => {
+    const disallowed = await check('/blocked/item-1');
+    assert.equal(disallowed.body.verdict, 'not_permitted');
+    assert.equal(disallowed.body.robots.status, 'disallowed');
+    assert.equal(disallowed.body.page, null);
+    assert.deepEqual(fx.pages(), [], 'the page itself was never requested');
+
+    clearRobotsCache();
+    fx.reset();
+    fx.state.robotsStatus = 503;
+    const unreadable = await check('/p/jsonld-1');
+    assert.equal(unreadable.body.verdict, 'not_permitted');
+    assert.equal(unreadable.body.robots.status, 'unreadable');
+    assert.deepEqual(fx.pages(), []);
+  });
+
+  it('reports a site that does not answer automated visits as blocked and never tries to get past the check', async () => {
+    const captcha = await check('/p/captcha');
+    assert.equal(captcha.body.verdict, 'blocked');
+    assert.equal(captcha.body.page.outcome, 'verification_page');
+    assert.match(captcha.body.advice.join(' '), /does not try to get past such checks/);
+    const refused = await check('/p/forbidden');
+    assert.deepEqual([refused.body.verdict, refused.body.page.outcome, refused.body.page.http_status], ['blocked', 'refused', 403]);
+    const throttled = await check('/p/throttle');
+    assert.deepEqual([throttled.body.verdict, throttled.body.page.outcome], ['blocked', 'rate_limited']);
+    assert.equal(fx.pages().filter((p) => p === '/p/captcha').length, 1, 'one request, no retry');
+  });
+
+  it('says what is missing when the page opens but shows no readable price, or does not exist', async () => {
+    const noPrice = await check('/p/noprice');
+    assert.deepEqual([noPrice.body.verdict, noPrice.body.page.outcome, noPrice.body.page.price], ['needs_setup', 'no_price', null]);
+    assert.match(noPrice.body.advice.join(' '), /JavaScript/);
+    const gone = await check('/p/gone');
+    assert.deepEqual([gone.body.verdict, gone.body.page.outcome], ['needs_setup', 'not_found']);
+    const feed = await check('/feed.json');
+    assert.deepEqual([feed.body.verdict, feed.body.page.outcome], ['needs_setup', 'not_a_page']);
+  });
+
+  it('is for administrators, validates the address and is recorded in the audit log', async () => {
+    assert.equal((await check('/p/jsonld-1', 'viewer')).status, 403);
+    assert.equal((await check('/p/jsonld-1', 'analyst')).status, 403);
+    assert.equal((await t.api('POST', '/collection/site-check', { body: { url: 'not an address' } })).status, 422);
+    assert.equal((await t.api('POST', '/collection/site-check', { body: { url: 'ftp://example.com/file' } })).status, 422);
+    await check('/p/jsonld-1');
+    const entry = db().get<{ entity_id: string; detail: string }>(`SELECT entity_id, detail FROM audit_log WHERE action = 'collection.site_checked' ORDER BY id DESC LIMIT 1`)!;
+    assert.equal(entry.entity_id, new URL(fx.origin).host);
+    assert.match(entry.detail, /"verdict":"direct"/);
+  });
+});
+
 describe('simulated demo source', () => {
   const profile = (seed: number) => ({ seed, base: 12, step: 0.25, promo: 0.25, depths: [0.1, 0.2], types: ['price_cut'], drift: 0.05, oos: 0.01 });
 
@@ -1437,6 +1516,23 @@ describe('collection health', () => {
 
     const filtered = await h.api('GET', '/collection/sources?status=not_configured');
     assert.deepEqual(filtered.body.rows.map((r: any) => r.retailer_id), [unconfigured.retailerId]);
+  });
+
+  it('passes the provider price entered in a source to the cost planner, and nothing made up', async () => {
+    const costOf = async (retailerId: number) => (await h.api('GET', `/collection/sources?retailer_id=${retailerId}`)).body.rows[0].cost_per_1000;
+    assert.equal(await costOf(unconfigured.retailerId), null, 'no price entered → none reported');
+    const setConfig = (value: unknown) =>
+      h.ctx.db.run('UPDATE retailers SET connector_config = ? WHERE id = ?', [JSON.stringify({ mode: 'bulk', format: 'json', cost_per_1000: value }), unconfigured.retailerId]);
+    setConfig(1.8);
+    assert.equal(await costOf(unconfigured.retailerId), 1.8);
+    setConfig('0.5');
+    assert.equal(await costOf(unconfigured.retailerId), 0.5);
+    for (const bad of [-1, 'a lot', 5000, null, '']) {
+      setConfig(bad);
+      assert.equal(await costOf(unconfigured.retailerId), null, `${JSON.stringify(bad)} is not a price`);
+    }
+    const field = describeConnectors().flatMap((c) => c.config_fields).find((f) => f.key === 'cost_per_1000');
+    assert.ok(field && field.type === 'number' && /does not pay or measure/.test(field.help ?? ''));
 
     const status = await h.api('GET', `/collection/retailers/${unconfigured.retailerId}/status`);
     assert.equal(status.body.configured, false);

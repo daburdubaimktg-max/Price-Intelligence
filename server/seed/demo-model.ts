@@ -7,7 +7,7 @@
  * is_demo = 1 — it is never presented as a real market observation.
  */
 import type { ObservationInput } from '../services/ingestion.ts';
-import type { PromoType } from '../../shared/constants.ts';
+import type { DealTag, PromoType } from '../../shared/constants.ts';
 import { addDays } from '../lib/time.ts';
 
 export interface DemoProfile {
@@ -27,6 +27,10 @@ export interface DemoProfile {
   drift: number;
   /** Daily probability of an out-of-stock episode starting. */
   oos: number;
+  /** Seller named with the listing: the retailer itself or a fictional marketplace seller. */
+  seller?: string;
+  /** What the sales rank refers to ("Shampoo" → "#12 in Shampoo"). Listings without it carry no sales rank. */
+  rankIn?: string;
 }
 
 export interface DemoDayState {
@@ -41,6 +45,14 @@ export interface DemoDayState {
   promoStartDay: number | null;
   promoEndDay: number | null;
   availability: 'in_stock' | 'out_of_stock';
+  // ---- fictional signals shown with the price (all DEMO, like the price itself) ----
+  tags: DealTag[];
+  tagText: string | null;
+  rating: number;
+  reviewCount: number;
+  salesRank: number | null;
+  salesRankLabel: string | null;
+  sellerName: string | null;
 }
 
 function mulberry32(seed: number): () => number {
@@ -72,6 +84,30 @@ export function roundToStep(value: number, step: number): number {
 const PROMO_LENGTH_MIN = 4;
 const PROMO_LENGTH_RANGE = 9; // 4–12 days
 
+/** Fictional sale events named by the demo deal tags; a new one roughly every month of the demo timeline. */
+const DEMO_SALE_EVENTS = ['Mega Sale', 'Payday Sale', 'Summer Sale', 'Anniversary Sale'];
+const DEMO_EVENT_LENGTH_DAYS = 30;
+
+/**
+ * The signals of one listing that do not change from day to day. They come from their own keyed random
+ * numbers, so adding signals left every simulated price exactly as it was.
+ */
+function listingSignals(profile: DemoProfile) {
+  const u = (salt: string) => keyedRandom(`${salt}:${profile.seed}`);
+  const bestSeller = u('best-seller') < 0.06;
+  return {
+    /** Stable between 3.8 and 4.8. */
+    rating: Math.round((3.8 + u('rating')) * 10) / 10,
+    reviewBase: 20 + Math.floor(u('reviews') ** 2 * 3500),
+    /** New reviews per day (0.1 – 2.5): the count only ever grows, slowly. */
+    reviewGrowth: 0.1 + u('review-growth') * 2.4,
+    bestSeller,
+    retailerChoice: !bestSeller && !!profile.rankIn && u('choice') < 0.05,
+    /** Best sellers hold rank 1–3; everything else sits further down and drifts a little from week to week. */
+    rankBase: profile.rankIn ? (bestSeller ? 1 + Math.floor(u('rank') * 3) : 4 + Math.floor(u('rank') * 140)) : null,
+  };
+}
+
 /** Simulates day 0 … `untilDay` (inclusive) and returns one state per day. */
 export function simulateDays(profile: DemoProfile, untilDay: number): DemoDayState[] {
   const rng = mulberry32(profile.seed);
@@ -88,6 +124,7 @@ export function simulateDays(profile: DemoProfile, untilDay: number): DemoDaySta
   let promoType: PromoType = 'price_cut';
   let nextPromoDay = Number.isFinite(gap) ? Math.floor(rng() * gap * 1.2) : Number.POSITIVE_INFINITY;
   let oosEnd = -1;
+  const signals = listingSignals(profile);
 
   const out: DemoDayState[] = [];
   for (let day = 0; day <= untilDay; day++) {
@@ -135,6 +172,37 @@ export function simulateDays(profile: DemoProfile, untilDay: number): DemoDaySta
         description = 'Bundle offer: free travel size with purchase';
       }
     }
+
+    // Tags follow the offer: the mechanic names its own tag, deeper price cuts are sometimes badged as a
+    // limited-time or sale-event deal. One draw per promotion, so the badge stays for the whole offer.
+    const tags: DealTag[] = [];
+    let tagText: string | null = null;
+    if (promoActive) {
+      const roll = keyedRandom(`tag:${profile.seed}:${promoStart}`);
+      if (promoType === 'multi_buy' || promoType === 'coupon') {
+        tags.push(promoType);
+        tagText = description;
+      } else if (promoType === 'price_cut' && promoDepth >= 0.25) {
+        if (roll < 0.45) {
+          tags.push('limited_time_deal');
+          tagText = 'Limited time deal';
+        } else if (roll < 0.8) {
+          tags.push('event_deal');
+          tagText = `${DEMO_SALE_EVENTS[Math.floor(promoStart / DEMO_EVENT_LENGTH_DAYS) % DEMO_SALE_EVENTS.length]} Deal`;
+        }
+      } else if (promoType === 'price_cut' && roll < 0.3) {
+        tags.push('deal');
+        tagText = 'Deal';
+      }
+    }
+    if (signals.bestSeller) tags.push('best_seller');
+    if (signals.retailerChoice) tags.push('retailer_choice');
+    let salesRank = signals.rankBase;
+    if (salesRank !== null && !signals.bestSeller) {
+      const drift = (keyedRandom(`rank-week:${profile.seed}:${Math.floor(day / 7)}`) - 0.5) * salesRank * 0.25;
+      salesRank = Math.max(4, salesRank + Math.round(drift));
+    }
+
     out.push({
       day,
       regular,
@@ -147,6 +215,13 @@ export function simulateDays(profile: DemoProfile, untilDay: number): DemoDaySta
       promoStartDay: promoActive ? promoStart : null,
       promoEndDay: promoActive ? promoEnd - 1 : null,
       availability: day <= oosEnd ? 'out_of_stock' : 'in_stock',
+      tags,
+      tagText,
+      rating: signals.rating,
+      reviewCount: signals.reviewBase + Math.floor(day * signals.reviewGrowth),
+      salesRank,
+      salesRankLabel: salesRank === null ? null : `#${salesRank} in ${profile.rankIn}`,
+      sellerName: profile.seller ?? null,
     });
   }
   return out;
@@ -175,6 +250,13 @@ export function demoObservation(listingId: number, state: DemoDayState, observed
     availability: state.availability,
     confidence: 1,
     collection_status: 'complete',
+    tags: state.tags,
+    tag_text: state.tagText,
+    rating: state.rating,
+    review_count: state.reviewCount,
+    sales_rank: state.salesRank,
+    sales_rank_label: state.salesRankLabel,
+    seller_name: state.sellerName,
   };
 }
 

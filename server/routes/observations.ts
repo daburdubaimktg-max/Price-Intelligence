@@ -16,18 +16,22 @@ import { csvLines } from '../lib/tabular.ts';
 import { nowIso, parseTimestamp } from '../lib/time.ts';
 import { audit } from '../services/core.ts';
 import { CSV_MIME, downloadName, provenanceSheet, writeXlsx, XLSX_MIME, type ColumnSpec } from '../services/export.ts';
-import { ingestObservations, restoreObservation, validateObservations, voidObservation, type ObservationInput } from '../services/ingestion.ts';
+import { ingestObservations, restoreObservation, SIGNAL_TEXT_MAX, validateObservations, voidObservation, type ObservationInput } from '../services/ingestion.ts';
 import { describeFilter, OBS_FROM, OBS_FROM_ALL, OBS_RECORD_COLUMNS, obsWhere, parseObsFilter, UNIT_PRICE_SQL, type ObsFilter } from '../services/obs-filter.ts';
 import {
   AVAILABILITY,
   AVAILABILITY_LABELS,
   COLLECTION_METHOD_LABELS,
   DATA_CLASS_LABELS,
+  DEAL_TAG_LABELS,
+  normaliseDealTags,
+  parseDealTags,
   PROMO_TYPE_LABELS,
   PROMO_TYPES,
   type Availability,
   type CollectionMethod,
   type DataClass,
+  type DealTag,
   type PromoType,
 } from '../../shared/constants.ts';
 import { formatPack, unitBasisLabel } from '../../shared/units.ts';
@@ -93,8 +97,17 @@ function listScope(query: Record<string, unknown>): ListScope {
   return { filter, voided, from, select, where: obsWhere(filter, { conditions, params }) };
 }
 
+/** A row as selected with OBS_RECORD_COLUMNS: the tags are still in their stored form (a JSON array). */
+type StoredObservation = Omit<ObservationRecord, 'tags'> & { tags: unknown };
+
+/** Turns a database row into the API record (the stored JSON list of tags becomes an array). */
+function toRecord(row: StoredObservation): ObservationRecord {
+  return { ...row, tags: parseDealTags(row.tags) };
+}
+
 export function fetchObservation(ctx: AppContext, id: number): ObservationRecord | undefined {
-  return ctx.db.get<ObservationRecord>(`SELECT ${OBS_RECORD_COLUMNS}, ${VOID_COLUMNS} ${OBS_FROM_ALL} ${VOID_JOIN} WHERE o.id = ?`, [id]);
+  const row = ctx.db.get<StoredObservation>(`SELECT ${OBS_RECORD_COLUMNS}, ${VOID_COLUMNS} ${OBS_FROM_ALL} ${VOID_JOIN} WHERE o.id = ?`, [id]);
+  return row ? toRecord(row) : undefined;
 }
 
 const EVIDENCE_SELECT = `SELECT e.id, e.kind, e.reference, e.file_name, e.mime_type, e.size_bytes, e.sha256, e.excerpt, e.captured_at,
@@ -182,6 +195,17 @@ const manualSchema = z.object({
   product_url: optionalText(2000),
   confidence: optionalNumber(),
   note: optionalText(1000),
+  // signals seen with the price; the tag keys themselves are checked by the ingestion service
+  tags: z
+    .union([z.array(z.string().max(60)).max(20), z.null()])
+    .optional()
+    .transform((v) => v ?? null),
+  tag_text: optionalText(SIGNAL_TEXT_MAX),
+  rating: optionalNumber(),
+  review_count: optionalNumber(),
+  sales_rank: optionalNumber(),
+  sales_rank_label: optionalText(SIGNAL_TEXT_MAX),
+  seller_name: optionalText(SIGNAL_TEXT_MAX),
   evidence_id: optionalId(),
   evidence: z
     .union([z.object({ kind: z.enum(['url', 'note', 'screenshot']), reference: z.string().trim().min(1).max(2000) }), z.null()])
@@ -226,6 +250,13 @@ export const OBSERVATION_EXPORT_COLUMNS: ColumnSpec[] = [
   { key: 'promo_starts_on', header: 'Promo starts on', type: 'date', width: 15 },
   { key: 'promo_ends_on', header: 'Promo ends on', type: 'date', width: 15 },
   { key: 'availability_label', header: 'Availability', type: 'text', width: 13 },
+  { key: 'tags_label', header: 'Tags', type: 'text', width: 26 },
+  { key: 'tag_text', header: 'Tag text', type: 'text', width: 26 },
+  { key: 'rating', header: 'Rating', type: 'number', numFmt: '0.0#', width: 9 },
+  { key: 'review_count', header: 'Reviews', type: 'integer', width: 10 },
+  { key: 'sales_rank', header: 'Sales rank', type: 'integer', width: 11 },
+  { key: 'sales_rank_label', header: 'Sales rank label', type: 'text', width: 22 },
+  { key: 'seller_name', header: 'Seller', type: 'text', width: 22 },
   { key: 'unit_price', header: 'Unit price', type: 'money' },
   { key: 'unit_basis', header: 'Unit price basis', type: 'text', width: 15 },
   { key: 'observed_at', header: 'Observed at (UTC)', type: 'datetime' },
@@ -248,11 +279,17 @@ const VOIDED_EXPORT_COLUMNS: ColumnSpec[] = [
   { key: 'void_reason', header: 'Void reason', type: 'text', width: 40 },
 ];
 
-type ExportRow = ObservationRecord & { evidence_reference: string | null };
+type ExportRow = StoredObservation & { evidence_reference: string | null };
+
+/** Tag keys as the readable list used in exports ("Limited-time deal; Best seller"); the importer reads it back. */
+export function tagLabels(tags: readonly DealTag[]): string | null {
+  return tags.length ? tags.map((tag) => DEAL_TAG_LABELS[tag]).join('; ') : null;
+}
 
 export function decorateForExport(row: ExportRow): Record<string, unknown> {
   return {
     ...row,
+    tags_label: tagLabels(parseDealTags(row.tags)),
     ownership_label: row.ownership === 'own' ? 'Own brand' : row.ownership === 'competitor' ? 'Competitor' : null,
     pack: row.pack_size ? formatPack(row.pack_size, row.pack_unit, row.units_per_pack) : null,
     promo_type_label: row.promo_type ? PROMO_TYPE_LABELS[row.promo_type] : null,
@@ -313,12 +350,12 @@ export default async function observationRoutes(app: FastifyInstance) {
     const page = pagination(query, 50, 500);
     const order = `${orderBy(query.sort, SORTABLE, 'o.observed_at DESC')}, o.id DESC`;
     const total = ctx.db.scalar<number>(`SELECT COUNT(*) ${scope.from} ${scope.where.sql}`, scope.where.params) ?? 0;
-    const rows = ctx.db.all<ObservationRecord>(`${scope.select} ${scope.from} ${scope.where.sql} ORDER BY ${order} LIMIT ? OFFSET ?`, [
+    const rows = ctx.db.all<StoredObservation>(`${scope.select} ${scope.from} ${scope.where.sql} ORDER BY ${order} LIMIT ? OFFSET ?`, [
       ...scope.where.params,
       page.pageSize,
       page.offset,
     ]);
-    return paged(rows, total, page);
+    return paged(rows.map(toRecord), total, page);
   });
 
   // ---- export (registered before :id; static segments win over parameters anyway) -------------
@@ -378,6 +415,7 @@ export default async function observationRoutes(app: FastifyInstance) {
         : []),
       'Timestamps are in UTC. "Market-local date" is the calendar date in the time zone of the market.',
       'Unit price = price per 100 ml, per 100 g or per unit (see "Unit price basis").',
+      '"Tags", "Tag text", "Rating", "Reviews", "Sales rank" and "Seller" are what the retailer showed with the price at that moment; blank = not captured.',
     ];
     const stream = new PassThrough();
     writeXlsx(
@@ -487,6 +525,14 @@ export default async function observationRoutes(app: FastifyInstance) {
       product_url: body.product_url,
       confidence: body.confidence ?? 0.95,
       note: body.note,
+      // Wording without ticked tags is read for the tags it names ("Limited time deal" → limited-time deal).
+      tags: body.tags?.length ? (body.tags as DealTag[]) : body.tag_text ? normaliseDealTags([body.tag_text]) : null,
+      tag_text: body.tag_text,
+      rating: body.rating,
+      review_count: body.review_count,
+      sales_rank: body.sales_rank,
+      sales_rank_label: body.sales_rank_label,
+      seller_name: body.seller_name,
     };
 
     // Check everything before anything is written, so a rejected entry leaves no trace.

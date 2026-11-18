@@ -14,6 +14,7 @@ import { DataTable } from '@/components/ui/data-table.tsx';
 import { Card, CardHeader, EmptyState, ErrorState, LoadingBlock, Notice, Segmented } from '@/components/ui/primitives.tsx';
 import { AvailabilityBadge, ConfidenceBadge, DataClassBadge, DemoBadge, DemoNotice, MarketTime, PriceCell, PromoBadge } from '@/components/domain/domain.tsx';
 import { ObservationDrawer } from '@/components/domain/observations.tsx';
+import { DealTagChips } from '@/components/domain/signals.tsx';
 import type { TimelineResult, TimelineSeries } from '@shared/api/analytics.ts';
 import type { ObservationRecord } from '@shared/api/observations.ts';
 import { CATALOGUE, fitColumns, useElementWidth, type FitColumn } from './shared.tsx';
@@ -208,7 +209,7 @@ export function ProductObservations({ productId }: { productId: number }) {
             <span className="truncate font-medium text-ink">{o.retailer_name}</span>
             {o.is_demo ? <DemoBadge /> : null}
           </span>
-          <span className="block truncate text-[11.5px] leading-4 text-ink-3">{[o.market_name, o.variant_name].filter(Boolean).join(' · ')}</span>
+          <span className="block truncate text-[11.5px] leading-4 text-ink-3">{[o.market_name, o.variant_name, o.seller_name ? `sold by ${o.seller_name}` : null].filter(Boolean).join(' · ')}</span>
           {compact ? (
             <span className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
               <MarketTime iso={o.observed_at} timeZone={o.timezone} short />
@@ -226,6 +227,19 @@ export function ProductObservations({ productId }: { productId: number }) {
         <span className="inline-flex flex-col items-end gap-0.5">
           <PriceCell price={o.current_price} regular={o.regular_price} currency={o.currency_code} isPromo={o.is_promo} />
           {o.is_promo ? <PromoBadge type={o.promo_type ?? 'other'} discount={o.discount_pct} description={o.promo_description} /> : null}
+          {/* without a column of its own, the tags sit under the price */}
+          {cardWidth < 900 && o.tags.length ? <DealTagChips tags={o.tags} tagText={o.tag_text} max={2} align="end" /> : null}
+        </span>
+      ),
+    },
+    {
+      key: 'tags',
+      header: 'Tags',
+      minWidth: 900,
+      headerTitle: 'Deal tags and badges the retailer showed with the price',
+      cell: (o) => (
+        <span className="block max-w-52">
+          <DealTagChips tags={o.tags} tagText={o.tag_text} variant="full" max={2} empty={<span className="text-ink-4">—</span>} />
         </span>
       ),
     },

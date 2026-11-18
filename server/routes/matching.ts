@@ -370,17 +370,17 @@ export default async function matchingRoutes(app: FastifyInstance) {
 
   /** Proposes mappings (status "suggested") for one own product or for all of them. */
   app.post('/mappings/suggest', { config: { permission: 'catalogue.write' } }, async (req): Promise<MappingSuggestResponse> => {
-    const body = parse(z.object({ own_product_id: optId() }), req.body);
+    const body = parse(z.object({ own_product_id: optId(), min_retailers: z.number().int().min(1).max(100).nullish() }), req.body);
     if (body.own_product_id) {
       const own = mappingProduct(ctx, body.own_product_id);
       if (!own) throw notFound('Product');
       if (own.ownership !== 'own') throw unprocessable('Suggestions are generated for own products. Choose one of your own products.');
     }
-    const result = suggestCompetitorMappings(ctx, body.own_product_id ?? undefined);
-    audit(ctx, req.user, 'mapping.suggested', 'mapping', null, { own_product_id: body.own_product_id ?? null, created: result.createdIds.length }, req.ip);
-    const suggestions = result.createdIds.length
-      ? fetchMappings(ctx, { where: [`m.id IN (${placeholders(result.createdIds.length)})`], params: result.createdIds })
-      : [];
+    const result = suggestCompetitorMappings(ctx, body.own_product_id ?? undefined, { minRetailers: body.min_retailers ?? undefined });
+    audit(ctx, req.user, 'mapping.suggested', 'mapping', null, { own_product_id: body.own_product_id ?? null, min_retailers: body.min_retailers ?? null, created: result.createdIds.length }, req.ip);
+    // the response lists what was just proposed; a whole-catalogue run can propose thousands, so only the first are returned
+    const listed = result.createdIds.slice(0, 200);
+    const suggestions = listed.length ? fetchMappings(ctx, { where: [`m.id IN (${placeholders(listed.length)})`], params: listed }) : [];
     return { created: result.createdIds.length, own_products_considered: result.considered, suggestions };
   });
 }

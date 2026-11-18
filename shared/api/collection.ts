@@ -6,7 +6,7 @@
  *   * `not_configured` is its own job status — a run that made no attempt is never a success
  *   * success rates are `null` ("n/a") when no real attempt was made, never a default 100 %
  */
-import type { CollectionMethod, DataClass, Frequency } from '../constants.ts';
+import type { Availability, CollectionMethod, DataClass, Frequency } from '../constants.ts';
 
 export type JobStatus = 'queued' | 'running' | 'succeeded' | 'partial' | 'failed' | 'not_configured' | 'cancelled';
 export type JobTrigger = 'schedule' | 'manual' | 'retry';
@@ -115,6 +115,11 @@ export interface CollectionSource {
   /** Active listings whose latest observation is older than the expected timeframe, or that were never observed. */
   listings_stale: number;
   listings_never_observed: number;
+  /**
+   * What the data provider charges per 1,000 items it returns, in USD, as entered in the source's settings.
+   * Only the cost planner uses it: this system neither pays nor measures provider charges. Null when not entered.
+   */
+  cost_per_1000: number | null;
   last_observed_at: string | null;
   latest_job: CollectionJob | null;
 }
@@ -297,4 +302,41 @@ export interface CollectionTestResult {
 export interface RunDueResult {
   started: CollectionJob[];
   skipped: Array<{ retailer_id: number; name: string; reason: string }>;
+}
+
+/**
+ * Result of POST /api/collection/site-check: whether one product page of a retailer can be read directly by this
+ * system, the way permitted website extraction would read it (robots.txt first, one plain request, no JavaScript).
+ * It describes this one page at this moment; it is not a statement about the site's terms of use.
+ */
+export interface SiteCheckResult {
+  url: string;
+  host: string;
+  checked_at: string;
+  robots: {
+    /** allowed: the page may be requested · disallowed: robots.txt forbids it · unreadable: robots.txt could not be read (treated as not permitted) · none: the site has no robots.txt */
+    status: 'allowed' | 'disallowed' | 'unreadable' | 'none';
+    detail: string;
+    /** Pause the site asks for between requests, in seconds. */
+    crawl_delay_s: number | null;
+  };
+  /** Null when the page was not requested (robots.txt did not allow it). */
+  page: {
+    http_status: number | null;
+    outcome: 'price_found' | 'no_price' | 'verification_page' | 'refused' | 'not_found' | 'rate_limited' | 'not_a_page' | 'error';
+    detail: string;
+    price: number | null;
+    regular_price: number | null;
+    currency: string | null;
+    availability: Availability | null;
+    /** Where on the page the price was read from. */
+    read_from: string | null;
+  } | null;
+  /**
+   * direct: can be read directly, at no cost · needs_setup: the page opens but the price is not readable without
+   * more configuration · blocked: the site does not answer automated visits · not_permitted: robots.txt rules it out.
+   */
+  verdict: 'direct' | 'needs_setup' | 'blocked' | 'not_permitted';
+  /** What this means and what to do next, in plain language. */
+  advice: string[];
 }

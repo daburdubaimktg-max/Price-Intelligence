@@ -11,7 +11,7 @@ import { Badge, Button, cn, DescriptionList, ErrorState, Field, LoadingBlock, No
 import { AvailabilityBadge, ChangeCell, DemoBadge, FrequencyLabel, MarketTime, MethodLabel, OwnershipDot } from '@/components/domain/domain.tsx';
 import { AVAILABILITY_LABELS, PROMO_TYPE_LABELS, type Availability, type PromoType } from '@shared/constants.ts';
 import type {
-  AlertDetail, AlertRow, CollectionFailedPayload, ComparedListing, OwnMoreExpensivePayload, PriceAlertPayload, StaleAlertPayload,
+  AlertDetail, AlertRow, CollectionFailedPayload, ComparedListing, NewListingPayload, OwnMoreExpensivePayload, PriceAlertPayload, StaleAlertPayload,
 } from '@shared/api/alerts.ts';
 import {
   AlertStatusBadge, alertTypeLabel, CHANNEL_LABELS, errorText, isStateAlert, NOTIFICATION_STATUS_META, SeverityBadge,
@@ -207,6 +207,69 @@ function CollectionFailedView({ alert, payload }: { alert: AlertRow; payload: Co
   );
 }
 
+/** Listings a collection run found at the retailer that were not there before. */
+function NewListingView({ payload }: { payload: NewListingPayload }) {
+  const guessed = payload.brands.reduce((sum, b) => sum + b.count, 0);
+  return (
+    <>
+      <DescriptionList
+        items={[
+          { label: 'New listings in this run', value: <span className="num">{fmtNumber(payload.count)}</span> },
+          { label: 'Rule minimum', value: <span className="num">{fmtNumber(payload.threshold)}</span>, hidden: payload.threshold <= 1 },
+          { label: 'Collection run', value: <span className="num">#{payload.job_id}</span> },
+          {
+            label: 'Not counted (first load)',
+            value: (
+              <span>
+                <span className="num">{fmtNumber(payload.baseline_skipped)}</span> — the first load of a retailer, or of a brand at a retailer, is a baseline
+              </span>
+            ),
+            hidden: payload.baseline_skipped === 0,
+          },
+        ]}
+      />
+      {payload.brands.length || payload.unrecognised ? (
+        <div className="mt-3">
+          <div className="eyebrow mb-1.5">By the brand named in the title</div>
+          <ul className="flex flex-wrap gap-1.5">
+            {payload.brands.map((b) => (
+              <li key={b.brand_id}>
+                <Badge tone={b.ownership === 'own' ? 'own' : 'comp'}>
+                  {b.brand_name} <span className="num">{fmtNumber(b.count)}</span>
+                </Badge>
+              </li>
+            ))}
+            {payload.unrecognised > 0 ? (
+              <li>
+                <Badge tone="outline">
+                  Brand not recognised <span className="num">{fmtNumber(payload.unrecognised)}</span>
+                </Badge>
+              </li>
+            ) : null}
+          </ul>
+          {guessed > 0 ? <p className="mt-1.5 text-[12px] text-ink-3">A guess from the retailer’s wording — it is not stored and matches nothing.</p> : null}
+        </div>
+      ) : null}
+      {payload.titles.length ? (
+        <div className="mt-3">
+          <div className="eyebrow mb-1.5">{payload.count > payload.titles.length ? `First ${payload.titles.length} titles` : 'Titles'}</div>
+          <ul className="list-disc space-y-0.5 pl-4 text-[12.5px] leading-5 text-ink-2">
+            {payload.titles.map((title, i) => (
+              <li key={i}>{title}</li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+      <Notice tone="info" className="mt-3" title="Nothing is matched automatically">
+        The listings are stored as unmatched. Review them — match each to an existing product, create a product for it, or ignore it.
+      </Notice>
+      <Link to={payload.link} className="link mt-3 inline-flex items-center gap-1 text-[12.5px] text-ink">
+        Open New Products for this retailer <ArrowRight className="size-3.5" aria-hidden />
+      </Link>
+    </>
+  );
+}
+
 function GenericPayload({ payload }: { payload: Record<string, unknown> }) {
   const entries = Object.entries(payload);
   if (!entries.length) return <p className="text-[12.5px] text-ink-3">No further details were recorded with this alert.</p>;
@@ -228,6 +291,9 @@ function PayloadView({ alert }: { alert: AlertDetail }) {
   if (alert.type === 'stale_observation' && payload && 'stale_count' in payload) return <StaleView alert={alert} payload={alert.payload as StaleAlertPayload} />;
   if (alert.type === 'collection_failed' && payload && 'consecutive_failures' in payload) {
     return <CollectionFailedView alert={alert} payload={alert.payload as CollectionFailedPayload} />;
+  }
+  if (alert.type === 'new_listing' && payload && Array.isArray(payload.titles) && typeof payload.link === 'string') {
+    return <NewListingView payload={alert.payload as NewListingPayload} />;
   }
   if (payload && 'event_kind' in payload) return <PriceEventView alert={alert} payload={alert.payload as PriceAlertPayload} />;
   return <GenericPayload payload={payload ?? {}} />;

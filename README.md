@@ -9,8 +9,11 @@ history into monitoring, comparisons, promotion analysis, alerts and reports.
 | Section | What it does |
 | --- | --- |
 | Overview | Headline figures, price movement, own vs competitor position, recent changes, promotions, markets |
-| Live Price Monitor | Latest price, unit price, promotion, availability and freshness of every listing |
+| Live Price Monitor | Latest price, unit price, promotion, deal tags, availability and freshness of every listing |
+| Deals | Listings on offer right now — tagged deals, promotions and prices below the regular price — with the context of their own history (30-day average, 90-day low, on deal since). Above the list, the comparison: how much of each range is on offer and how deep, own brands beside competitors, by brand, product range, retailer and market; brand × retailer and brand × kind of offer; the last 30 days |
+| New Products | Listings that appeared at a retailer after its first load: possible launches, kept apart from known products that reached another retailer |
 | Product Catalogue | Products, variants, brands, categories, CSV / Excel import, listing matching, competitor mappings |
+| Brand Explorer | Brand by brand: the range, a price matrix across retailers and markets, the trend, and the brands it competes with |
 | Competitor Intelligence | Own product vs mapped competitors: prices, price per 100 ml / 100 g, gaps, history |
 | Historical Price Explorer | Any slice of the ledger by retailer, product, brand, market, date, price, promotion, availability; period comparisons |
 | Promotion Intelligence | Promotions detected from observations: depth, duration, frequency, timeline |
@@ -114,6 +117,61 @@ what it needs, and **Failing** when a run did not succeed.
 Credentials are stored encrypted and never shown again. "Test connection" performs a real request and reports what
 actually happened.
 
+**Deal tags and signals.** What a retailer shows next to a price is kept with the observation, historically, like
+the price itself: the deal tag ("Limited time deal", "Yellow Friday Deal", "Lowest price in 30 days", coupons,
+multi-buy offers), badges (best seller, the retailer's choice, selling fast), the rating and number of reviews, the
+sales rank and the seller. The retailer's own wording is stored alongside the tag. A plain "Save 30 %" is a price
+cut, not a tag. Tags arrive through every route: a *Tags* column in imports, the manual-entry form, and the field
+mapping of feeds and provider snapshots.
+
+**Provider snapshots (third-party data integration).** A data provider collects on its own schedule and delivers a
+snapshot; this system reads the latest one. The mapping understands what such snapshots look like:
+
+| Mapping option | Meaning |
+| --- | --- |
+| `sale_price \|\| price` | Alternatives: the first field that has a value is used |
+| Tag / badge fields | Fields holding the tags shown with the price — one text, a list of texts or a list of objects with a text. "#3 in Shampoos" is read as the sales rank |
+| Yes/no fields that mean a badge | e.g. `is_bestseller` → "Best seller" |
+| Rating, reviews, sales rank, seller | Stored with the observation |
+| Observation time: the item's own timestamp | Each price is dated when the provider saw it, so reading an unchanged snapshot twice adds nothing |
+
+A list price below the selling price, or more than ten times above it, is not stored as the regular price (the
+observation says so). For Apify, schedule a *task* per retailer site in your own Apify account, store your API token
+as the source credential and point the source at
+`https://api.apify.com/v2/actor-tasks/<TASK_ID>/runs/last/dataset/items?status=SUCCEEDED&clean=true&format=json`;
+a ready-made template is offered when you configure a third-party source.
+
+**First load of a large catalogue.** Thousands of products cannot be created by hand. `load-catalogue` (see
+*Maintenance commands*) reads one prepared JSON file — retailers, products, the listings that belong to them, the
+basis of every match, and optionally the observed price of each listing with its tags — and loads it through the
+same ledger rules as everything else. It is idempotent, never creates demo data, keeps the raw files you name as
+evidence, records why each listing was matched to its product, and raises no alerts for the first observation of a
+listing. `--dry-run` reports what would happen and stores nothing. The file format is documented at the top of
+`server/services/catalogue-load.ts`.
+
+**New products.** A feed, API or provider source with *Add unknown items as unmatched listings* switched on
+stores the items it does not know as unmatched listings. *New Products* lists what was first seen in the last 7, 30
+or 90 days. A listing counts as new only if it was first seen more than 48 hours after the first listing of its
+retailer and, where its brand is known, of that brand at that retailer: a first load is a baseline, not a launch.
+*New product* means nothing says the product was on sale anywhere before; *new at a retailer* means it was already
+listed elsewhere. The brand of an unmatched listing is recognised from the retailer's title or page address — a
+guess that is not stored and matches nothing. Nothing is matched or created automatically; review happens in
+*Product Catalogue → Matching*.
+
+**Adding a platform.** *Administration → Retailers & listings → Check a site* answers the first question about a
+new retailer: can its product pages be read directly, at no cost? It reads the site's `robots.txt`, requests one
+product page only if that allows it, and reports what it found — readable directly, opens but shows no readable
+price, does not answer automated visits, or ruled out by the site's own rules. It never tries to get past a
+verification page, and it says what is technically possible, not what the retailer's terms permit. Then *Add
+retailer*, choose how prices arrive, and switch on discovery so its range is found.
+
+**Planning what collection costs.** *Data Collection Centre → Cost planner* multiplies each platform's number of
+products by how often they are checked and by the provider price entered for it, and shows the plan beside what
+daily collection of everything would cost. Existing platforms come with their real number of listings and current
+schedule; planned platforms can be added to see what growing would cost. Enter what a provider charges per 1,000
+items once in the source's settings ("Provider price per 1,000 items") and the planner starts from it. It is a
+calculator: this system neither pays nor measures provider charges, and the plan is kept in the browser only.
+
 **Collection rules built in**
 
 - `robots.txt` is fetched and obeyed on every website-extraction run; disallowed pages are skipped and logged.
@@ -188,6 +246,10 @@ availability change links to the observation that caused it.
 In-app notifications need nothing. E-mail needs an SMTP server and a webhook needs a URL — both are set, and can
 be tested for real, in *Administration → Integrations*. Until then they are shown as not configured.
 
+*New product found at a retailer* — one alert per collection run that found new listings (count, recognised
+brands, first titles), never for a first load or a demo source. Scope it by market, retailer or brand and set a
+minimum number of listings per run. Existing installations receive the default rule with migration 003.
+
 ---
 
 ## The assistant
@@ -203,6 +265,43 @@ be tested for real, in *Administration → Integrations*. Until then they are sh
   anything is queried. If the call fails the built-in engine answers and the reason is shown.
 - The Claude path uses Anthropic's server-side refusal fallback (beta) so that a declined request is answered by a
   fallback model rather than failing.
+
+---
+
+## A read-only snapshot you can open from a link
+
+`npm run build:snapshot` turns the app and a copy of the database into a static website (in `dist/pages`) that
+needs no server: put it on GitHub Pages or any static host and everyone with the link sees the app with the data
+as it stood when the snapshot was taken.
+
+```bash
+npm run build:snapshot
+```
+
+```bash
+npm run build:snapshot -- --db data/backups/some-backup.db
+```
+
+How it works: the page downloads the database copy (a few MB) and opens it with SQLite compiled to WebAssembly.
+The app's own routes and services — the same code the server runs — answer the screens from that copy, inside a
+background worker in the visitor's browser. Nothing is sent anywhere.
+
+What a snapshot is, and is not:
+
+- **Read-only.** Every visitor is the built-in *Snapshot viewer* (the Viewer role). Changes are refused; on-screen
+  reports, report CSV files and the assistant's built-in engine work because they are computed from the stored
+  records. Price collection, imports, Excel/CSV exports, evidence files and the administration area are not part of
+  a snapshot.
+- **A moment in time.** "Now" inside the snapshot starts at the moment it was taken, so freshness, ages and current
+  offers read exactly as they did then, however much later the link is opened. A banner states the real date.
+- **Public if the host is public.** There is no sign-in on a static page: anyone who has the link (or finds the
+  files) can read everything in it. The page asks search engines not to index it, which is a request, not a lock.
+- **Cleaned before it leaves.** The copy contains no password hashes, sessions, stored credentials, audit trail,
+  saved assistant questions or report runs; account names and addresses are replaced; ids and links of third-party
+  provider datasets are withheld. Price observations are copied untouched. The original database is only read.
+
+To publish on GitHub Pages: push the contents of `dist/pages` to a branch (conventionally `gh-pages`) and choose
+that branch under *Settings → Pages*. To take it down, switch Pages off there (and delete the branch).
 
 ---
 
@@ -253,6 +352,9 @@ npm run db:status
 | `npm run db:seed-demo` / `npm run db:purge-demo` | Load / remove the demo dataset |
 | `npm run db:export-excel` | Write the whole database as an Excel workbook |
 | `npm run db:backup` | Write a consistent copy of the database file |
+| `npm run cli -- load-catalogue <file.json> [--dry-run] [--update-products]` | Load a prepared catalogue file: retailers, products, listings and the price observed for each listing. `--update-products` also brings products that are already on record in line with the file |
+| `npm run cli -- suggest-mappings [--min-retailers N]` | Propose competitor pairings for own products (never approved automatically); with `N`, only for own products listed at N retailers or more |
+| `npm run cli -- fetch-rates` | Fetch the latest exchange rates from the configured provider |
 | `npm run cli -- create-admin <email> [name]` | Create an administrator with a one-time password |
 | `npm run cli -- reset-password <email>` | Reset a password and sign the user out everywhere |
 
@@ -271,6 +373,7 @@ server/   Fastify HTTP API, run directly from TypeScript
   routes/     one file per API area, registered automatically
   seed/       reference data and the demo dataset
 shared/   Types and constants used by both sides
+snapshot/ The read-only static edition: runs server/routes + services in the browser on SQLite-WebAssembly
 tests/    API and service tests (node:test)
 ```
 
@@ -294,13 +397,26 @@ npm run typecheck
 ```
 
 The suite covers the ledger guarantees, ingestion and de-duplication, catalogue and matching, imports and exports,
-the collection engine (against local fixture servers), alerts, administration, analytics against hand-computed
-figures, reports, the assistant, access control and security headers, and the demo dataset's labelling and removal.
+the collection engine (against local fixture servers), provider snapshots with tags, the bulk catalogue load, deal
+tags and the Deals and Brand Explorer figures, alerts, administration, analytics against hand-computed figures,
+reports, the assistant, access control and security headers, the demo dataset's labelling and removal, and the
+clean-up of the database copy that a public snapshot ships with, new-product detection (baseline rule, brand
+recognition, the alert of a collection run) and the site check.
 
 ## Known limits
 
 - Website extraction does not execute JavaScript (see above).
+- Brands have no alternative spellings yet: a title that names a brand only in Arabic is recognised from the page
+  address where it contains the name, otherwise not at all.
+- A platform has one collection schedule. Checking its key products more often than the rest (two speeds within
+  one platform) is not built; the cost planner therefore plans one pace per platform.
 - No retailer integration is pre-configured; each needs the access and credentials described above.
+- Price context on the Deals page (30-day average, 90-day low) and its 30-day trend need history: they fill in as
+  days are collected. Shares in the comparison are measured against the listings that were observed with a fresh
+  price, so a retailer that was not collected recently drops out of them instead of counting as "no offers".
+- Listings are matched to the same product on a barcode, on the retailer's own item id across its country sites, or
+  on brand, product type, pack size and identical name words. Products that retailers describe differently stay
+  separate until a person matches them.
 - The Claude-backed interpretation of assistant questions is implemented and unit-tested with a stand-in, but has
   not been exercised against the live API in this repository's test run (it needs your key).
 - Single-node by design (SQLite). Run one server process per data directory.

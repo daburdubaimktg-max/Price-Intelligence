@@ -13,8 +13,8 @@ import { fireHook } from '../context.ts';
 import { placeholders, SqliteError } from '../db/sqlite.ts';
 import { sha256Hex } from '../lib/crypto.ts';
 import { isIsoDate, localDate, nowIso } from '../lib/time.ts';
-import type { Availability, CollectionMethod, PromoType } from '../../shared/constants.ts';
-import { AVAILABILITY, PROMO_TYPES } from '../../shared/constants.ts';
+import type { Availability, CollectionMethod, DealTag, PromoType } from '../../shared/constants.ts';
+import { AVAILABILITY, DEAL_TAGS, isDealTag, PROMO_TYPES, sortDealTags } from '../../shared/constants.ts';
 import { getSetting } from './core.ts';
 import { refreshListingDerived, type ObsRow } from './derived.ts';
 
@@ -42,6 +42,21 @@ export interface ObservationInput {
   note?: string | null;
   /** When this particular row was captured (overrides IngestOptions.collectedAt). */
   collected_at?: string | null;
+  // ---- signals shown with the price (kept historically, never part of the observation's identity) ----
+  /** Deal tags / badges the retailer shows, as keys of DEAL_TAGS (see normaliseDealTags for free text). */
+  tags?: DealTag[] | null;
+  /** The retailer's own wording of the tag, e.g. "Early Yellow Friday Deal". */
+  tag_text?: string | null;
+  /** Average customer rating, 0–5. */
+  rating?: number | null;
+  /** Number of ratings / reviews behind the rating. */
+  review_count?: number | null;
+  /** Position in the retailer's sales ranking (1 = best; 0 is read as "not ranked"). */
+  sales_rank?: number | null;
+  /** The ranking the position refers to, e.g. "#3 in Shampoos". */
+  sales_rank_label?: string | null;
+  /** Who sells the item on this listing (the retailer itself or a marketplace seller). */
+  seller_name?: string | null;
 }
 
 export interface IngestOptions {
@@ -110,6 +125,14 @@ export interface NormalisedObservation {
   confidence: number | null;
   evidence_id: number | null;
   note: string | null;
+  /** Tag keys, de-duplicated, in DEAL_TAGS order (stored as a JSON array). */
+  tags: DealTag[];
+  tag_text: string | null;
+  rating: number | null;
+  review_count: number | null;
+  sales_rank: number | null;
+  sales_rank_label: string | null;
+  seller_name: string | null;
   dedupe_key: string;
 }
 
@@ -136,6 +159,35 @@ const text = (value: string | null | undefined, max: number): string | null => {
 };
 
 const fmt = (value: number | null) => (value === null ? '' : value.toFixed(4));
+
+/** Longest tag wording, rank label or seller name that is stored (longer text is cut). */
+export const SIGNAL_TEXT_MAX = 200;
+
+/** Retailer wording as stored: one line, trimmed, without icon-font glyphs or control characters, at most 200 characters. */
+function signalText(value: string | null | undefined): string | null {
+  if (value === null || value === undefined) return null;
+  const t = String(value)
+    .replace(/[\u0000-\u001F\u007F\uE000-\uF8FF]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return t ? [...t].slice(0, SIGNAL_TEXT_MAX).join('').trim() : null;
+}
+
+function cleanTags(value: unknown): DealTag[] {
+  if (value === null || value === undefined) return [];
+  if (!Array.isArray(value)) throw new Error('Tags must be a list of tag keys');
+  for (const tag of value) {
+    if (!isDealTag(tag)) throw new Error(`Unknown deal tag "${String(tag)}" (use: ${DEAL_TAGS.join(', ')})`);
+  }
+  return sortDealTags(value as DealTag[]);
+}
+
+function cleanCount(value: number | null | undefined, label: string): number | null {
+  if (value === null || value === undefined) return null;
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < 0) throw new Error(`${label} must be a whole number of 0 or more`);
+  if (value > MAX_PRICE) throw new Error(`${label} is implausibly large`);
+  return value;
+}
 
 /**
  * Validates one observation and applies the pricing rules. Pure: throws an Error with a
@@ -224,6 +276,19 @@ export function normaliseObservation(input: ObservationInput, listing: ListingCo
     sourceTimestamp = Number.isNaN(st.getTime()) ? null : st.toISOString();
   }
 
+  // Signals shown with the price. They describe the listing at that instant but are not part of the fact's
+  // identity: the same price at the same instant is one observation, with or without its badges.
+  const tags = cleanTags(input.tags);
+  let rating: number | null = null;
+  if (input.rating !== null && input.rating !== undefined) {
+    if (typeof input.rating !== 'number' || !Number.isFinite(input.rating) || input.rating < 0 || input.rating > 5) {
+      throw new Error('Rating must be between 0 and 5');
+    }
+    rating = round(input.rating, 2);
+  }
+  const reviewCount = cleanCount(input.review_count, 'Review count');
+  const salesRank = cleanCount(input.sales_rank, 'Sales rank') || null; // ranks start at 1; 0 means "not ranked"
+
   // Identity of the fact: listing + instant + values. The channel it arrived through is irrelevant.
   const dedupeKey = sha256Hex(
     [listing.id, observedAt, fmt(current), fmt(regular), fmt(promo), availability, currency, isPromo ? promoType : ''].join('|'),
@@ -253,6 +318,13 @@ export function normaliseObservation(input: ObservationInput, listing: ListingCo
     confidence,
     evidence_id: input.evidence_id ?? null,
     note: text(input.note, 1000),
+    tags,
+    tag_text: signalText(input.tag_text),
+    rating,
+    review_count: reviewCount,
+    sales_rank: salesRank,
+    sales_rank_label: signalText(input.sales_rank_label),
+    seller_name: signalText(input.seller_name),
     dedupe_key: dedupeKey,
   };
 }
@@ -262,7 +334,7 @@ const INSERT_COLUMNS = [
   'is_promo', 'promo_type', 'promo_description', 'promo_starts_on', 'promo_ends_on', 'availability', 'product_url',
   'observed_at', 'observed_basis', 'observed_local_date', 'collected_at', 'source_timestamp', 'source_method',
   'collection_status', 'confidence', 'evidence_id', 'job_id', 'import_batch_id', 'entered_by', 'note', 'dedupe_key',
-  'is_demo', 'created_at',
+  'is_demo', 'created_at', 'tags', 'tag_text', 'rating', 'review_count', 'sales_rank', 'sales_rank_label', 'seller_name',
 ] as const;
 const INSERT_SQL = `INSERT INTO price_observations (${INSERT_COLUMNS.join(', ')}) VALUES (${placeholders(INSERT_COLUMNS.length)})`;
 
@@ -348,6 +420,7 @@ export function ingestObservations(ctx: AppContext, inputs: ObservationInput[], 
       const createdAt = nowIso();
       const record: Record<(typeof INSERT_COLUMNS)[number], unknown> = {
         ...row,
+        tags: JSON.stringify(row.tags),
         collected_at: input.collected_at ?? collectedAt,
         source_method: options.sourceMethod,
         job_id: options.jobId ?? null,

@@ -8,6 +8,7 @@ import type { MonitorRow } from '@shared/api/analytics.ts';
 import {
   AvailabilityBadge, ChangeCell, DataClassBadge, DemoBadge, FreshnessCell, MarketTime, packText, PriceCell, ProductCell, PromoBadge, UnitPriceCell,
 } from '@/components/domain/domain.tsx';
+import { DealTagChips } from '@/components/domain/signals.tsx';
 import type { Column } from '@/components/ui/data-table.tsx';
 import { Badge } from '@/components/ui/primitives.tsx';
 import { DASH, fmtPrice, fmtRelative } from '@/lib/format.ts';
@@ -85,6 +86,12 @@ export function useMonitorColumns(priceSortable: boolean): Array<Column<MonitorR
             {unmatched && retailerInProduct ? (
               <span className="mt-0.5 block pl-4">
                 <Badge tone="outline">Unmatched</Badge>
+              </span>
+            ) : null}
+            {/* deal tags / badges the retailer showed with the latest price, in its own wording */}
+            {r.tags.length ? (
+              <span className="mt-1 block pl-4">
+                <DealTagChips tags={r.tags} tagText={r.tag_text} variant="full" max={phone ? 2 : 3} />
               </span>
             ) : null}
             {phone ? (

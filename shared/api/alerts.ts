@@ -142,6 +142,28 @@ export interface CollectionFailedPayload {
   checked_at: string;
 }
 
+/** Payload of `new_listing` alerts (one alert per rule and collection run). */
+export interface NewListingPayload {
+  /** Listings of the run that count as new for this rule (after the baseline rule and the rule's brand scope). */
+  count: number;
+  threshold: number;
+  retailer_id: number;
+  retailer_name: string;
+  market_code: string;
+  job_id: number;
+  /** Brands recognised in the titles, most frequent first. A guess from the retailer's wording. */
+  brands: Array<{ brand_id: number; brand_name: string; ownership: 'own' | 'competitor'; count: number }>;
+  /** New listings whose title names no brand of the catalogue. */
+  unrecognised: number;
+  /** The first titles (at most ten) and listing ids (at most fifty). */
+  titles: string[];
+  listing_ids: number[];
+  /** Listings of the same run that belong to a first load (of the retailer, or of a brand there) and are not counted. */
+  baseline_skipped: number;
+  /** Where to review them in the web application. */
+  link: string;
+}
+
 export interface AlertRow {
   id: number;
   rule_id: number | null;
@@ -167,7 +189,7 @@ export interface AlertRow {
   timezone: string | null;
   observation_id: number | null;
   job_id: number | null;
-  payload: PriceAlertPayload | OwnMoreExpensivePayload | StaleAlertPayload | CollectionFailedPayload | Record<string, unknown>;
+  payload: PriceAlertPayload | OwnMoreExpensivePayload | StaleAlertPayload | CollectionFailedPayload | NewListingPayload | Record<string, unknown>;
   triggered_at: string;
   acknowledged_by: number | null;
   acknowledged_by_name: string | null;

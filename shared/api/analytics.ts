@@ -3,6 +3,7 @@
  * market intelligence). Shared by the server (which produces them) and the web client (which renders them).
  * Types only — no runtime code.
  */
+import type { DealTag } from '../constants.ts';
 
 export interface Stats {
   n: number;
@@ -255,6 +256,16 @@ export interface MonitorRow {
   age_hours: number | null;
   stale_after_hours: number;
   is_stale: number;
+  // ---- signals of the latest observation ----
+  /** Deal tags / badges shown with the latest price (keys of DEAL_TAGS; empty when none or never observed). */
+  tags: DealTag[];
+  /** The retailer's own wording of the tag, e.g. "Early Yellow Friday Deal". */
+  tag_text: string | null;
+  rating: number | null;
+  review_count: number | null;
+  sales_rank: number | null;
+  sales_rank_label: string | null;
+  seller_name: string | null;
 }
 
 export interface MonitorFacets {
@@ -269,6 +280,8 @@ export interface MonitorFacets {
   decreases_24h: number;
   latest_observation_at: string | null;
   demo_listings: number;
+  /** Listings with a fresh (not stale) latest observation that currently carries each tag. */
+  by_tag: Record<DealTag, number>;
 }
 
 export type EventGroupBy = 'retailer' | 'market' | 'brand' | 'category' | 'product';

@@ -129,6 +129,13 @@ function describeStatus(
 }
 
 /** Every source with its computed status. */
+
+/** The provider price per 1,000 items entered in a source's settings (USD), or null when absent or not a sensible number. */
+function costPer1000(value: unknown): number | null {
+  const n = typeof value === 'number' ? value : typeof value === 'string' && value.trim() !== '' ? Number(value) : Number.NaN;
+  return Number.isFinite(n) && n >= 0 && n <= 1000 ? Math.round(n * 10_000) / 10_000 : null;
+}
+
 export function listSources(ctx: AppContext, filters: SourceFilters = {}, now: Date = new Date()): CollectionSource[] {
   const conditions: string[] = [];
   const params: Array<string | number> = [];
@@ -200,6 +207,7 @@ export function listSources(ctx: AppContext, filters: SourceFilters = {}, now: D
       listings_failed_last_run: attempt ? attempt.listings_failed : null,
       listings_stale: st?.stale ?? 0,
       listings_never_observed: st?.never_observed ?? 0,
+      cost_per_1000: costPer1000(source.config.cost_per_1000),
       last_observed_at: st?.last_observed_at ?? null,
       latest_job: latestAny.get(retailer.id) ?? null,
     };

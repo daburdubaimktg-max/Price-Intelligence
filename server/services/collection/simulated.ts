@@ -92,6 +92,8 @@ async function collectSimulated(cc: CollectContext): Promise<CollectResult> {
       evidenceIndex = result.evidence.length - 1;
     }
     const { listing_id: _ignored, ...draft } = demoObservation(listing.id, stateOnDay(profile, day), observedAt, epoch);
+    // Profiles stored before sellers were simulated name none: the demo retailer then sells the item itself.
+    draft.seller_name ??= cc.retailer.name;
     result.outcomes.push({ listing_id: listing.id, status: 'ok', observation: draft, evidence: evidenceIndex, strategy: 'simulated' });
   }
   result.itemsFound = result.outcomes.filter((o) => o.status === 'ok').length;

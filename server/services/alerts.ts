@@ -6,9 +6,12 @@
  * collection) are re-evaluated periodically and keep exactly one open alert per rule and retailer,
  * which is updated in place and resolved automatically once the condition clears.
  *
+ * A third kind reacts to a collection run that found listings it did not know: one "new product" alert
+ * per rule and run, never for a first load.
+ *
  * Every alert is generated from stored records — observations, listing state and collection jobs.
  */
-import type { AppContext, IngestedSummary, PriceEvent } from '../context.ts';
+import type { AppContext, DiscoveredSummary, IngestedSummary, PriceEvent } from '../context.ts';
 import { placeholders, type SqlParam } from '../db/sqlite.ts';
 import { nowIso } from '../lib/time.ts';
 import {
@@ -27,11 +30,13 @@ import { formatPack, unitBasisLabel } from '../../shared/units.ts';
 import type {
   CollectionFailedPayload,
   ComparedListing,
+  NewListingPayload,
   OwnMoreExpensivePayload,
   PriceAlertPayload,
   StaleAlertPayload,
   StateCheckResult,
 } from '../../shared/api/alerts.ts';
+import { describeDiscovered } from './analytics/new-listings.ts';
 import { queueAlertNotifications } from './notifications.ts';
 
 export const EVENT_RULE_TYPES: AlertType[] = [
@@ -186,6 +191,7 @@ const DEFAULT_RULES: Array<{
   { name: 'Unexpected price increase (5%+)', type: 'price_increase', severity: 'warning', threshold_pct: 5 },
   { name: 'Collection failing repeatedly', type: 'collection_failed', severity: 'critical', threshold_count: 3 },
   { name: 'No fresh observation within the expected timeframe', type: 'stale_observation', severity: 'warning' },
+  { name: 'New products found at a retailer', type: 'new_listing', severity: 'info', threshold_count: 1 },
 ];
 
 /** Creates the standard rule set on an empty installation (configuration, not demo data). */
@@ -610,6 +616,99 @@ export function evaluateIngested(ctx: AppContext, summary: IngestedSummary): num
 }
 
 // ---------------------------------------------------------------------------------------------
+// New products found by a collection run
+// ---------------------------------------------------------------------------------------------
+const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+
+/**
+ * Raises the "new product" alerts for the listings a collection run has just found: one alert per rule
+ * and run. Listings that belong to a first load — of the retailer, or of their brand at the retailer —
+ * are a baseline and are not counted; demo and simulated sources never alert.
+ */
+export function evaluateDiscovered(ctx: AppContext, summary: DiscoveredSummary, now: Date = new Date()): number {
+  if (summary.isDemo || summary.sourceMethod === 'simulated' || summary.listingIds.length === 0) return 0;
+  const rules = loadRules(ctx, ['new_listing']);
+  if (rules.length === 0) return 0;
+  const facts = describeDiscovered(ctx, summary.retailerId, summary.listingIds);
+  const retailer = facts.retailer;
+  if (!retailer || retailer.is_demo || facts.fresh.length === 0) return 0;
+
+  const at = now.toISOString();
+  const created: number[] = [];
+  ctx.db.tx(() => {
+    for (const rule of rules) {
+      if (rule.market_id !== null && rule.market_id !== retailer.market_id) continue;
+      if (rule.retailer_id !== null && rule.retailer_id !== retailer.id) continue;
+      // The product type of an unmatched listing is not known, so such a scope can never be met.
+      if (rule.category_id !== null || rule.product_id !== null) continue;
+      const listings = rule.brand_id === null ? facts.fresh : facts.fresh.filter((l) => l.brand?.brand_id === rule.brand_id);
+      const threshold = Math.max(1, rule.threshold_count ?? ALERT_TYPE_INFO.new_listing.defaultThreshold ?? 1);
+      if (listings.length < threshold) continue;
+      if (rule.cooldown_hours > 0) {
+        const since = new Date(now.getTime() - rule.cooldown_hours * 3_600_000).toISOString();
+        if (ctx.db.get('SELECT 1 AS hit FROM alerts WHERE rule_id = ? AND retailer_id = ? AND triggered_at > ? LIMIT 1', [rule.id, retailer.id, since])) continue;
+      }
+
+      const brands = new Map<number, NewListingPayload['brands'][number]>();
+      let unrecognised = 0;
+      for (const listing of listings) {
+        if (!listing.brand) {
+          unrecognised++;
+          continue;
+        }
+        const entry = brands.get(listing.brand.brand_id) ?? { brand_id: listing.brand.brand_id, brand_name: listing.brand.brand_name, ownership: listing.brand.ownership, count: 0 };
+        entry.count += 1;
+        brands.set(entry.brand_id, entry);
+      }
+      const ranked = [...brands.values()].sort((a, b) => b.count - a.count || a.brand_name.localeCompare(b.brand_name));
+      const titles = listings.map((l) => (l.title ?? l.url ?? `Listing ${l.listing_id}`).slice(0, 140));
+      const skipped = facts.baseline.retailer + facts.baseline.brand;
+      const payload: NewListingPayload = {
+        count: listings.length,
+        threshold,
+        retailer_id: retailer.id,
+        retailer_name: retailer.name,
+        market_code: retailer.market_code,
+        job_id: summary.jobId,
+        brands: ranked,
+        unrecognised,
+        titles: titles.slice(0, 10),
+        listing_ids: listings.slice(0, 50).map((l) => l.listing_id),
+        baseline_skipped: skipped,
+        link: `/new-products?retailer_id=${retailer.id}&days=7`,
+      };
+      const breakdown = [...ranked.map((b) => `${b.brand_name} ${b.count}`), ...(unrecognised > 0 ? [`brand not recognised ${unrecognised}`] : [])].join(', ');
+      const shownTitles = titles.slice(0, 3).map((t) => `“${t}”`).join(', ');
+      const title = `${plural(listings.length, 'new product')} found at ${retailer.name} (${retailer.market_name})`;
+      const message =
+        `Collection run #${summary.jobId} found ${plural(listings.length, 'listing')} at ${retailer.name}, ${retailer.market_name} that ${listings.length === 1 ? 'was' : 'were'} not there before` +
+        `${breakdown ? ` — by the brand named in the title: ${breakdown}` : ''}.` +
+        `${shownTitles ? ` ${listings.length > 3 ? 'First titles' : listings.length === 1 ? 'Title' : 'Titles'}: ${shownTitles}.` : ''}` +
+        ` ${listings.length === 1 ? 'It is' : 'They are'} stored as unmatched and nothing is matched automatically: review ${listings.length === 1 ? 'it' : 'them'} under New Products.` +
+        `${skipped > 0 ? ` ${plural(skipped, 'more listing')} of this run ${skipped === 1 ? 'belongs' : 'belong'} to a first load and ${skipped === 1 ? 'is' : 'are'} not counted.` : ''}`;
+      const id = insertAlert(ctx, {
+        rule,
+        title,
+        message,
+        payload,
+        listing_id: null,
+        product_id: null,
+        retailer_id: retailer.id,
+        market_id: retailer.market_id,
+        observation_id: null,
+        job_id: summary.jobId,
+        dedupe_key: `rule:${rule.id}:new_listing:job:${summary.jobId}`,
+        triggered_at: at,
+        is_demo: 0,
+      });
+      if (id) created.push(id);
+    }
+  });
+  queueAlertNotifications(ctx, created);
+  return created.length;
+}
+
+// ---------------------------------------------------------------------------------------------
 // State rules
 // ---------------------------------------------------------------------------------------------
 interface ActiveStateAlert {
@@ -926,6 +1025,9 @@ export function registerAlertEngine(ctx: AppContext): void {
   registered.add(ctx);
   ctx.hooks.observationsIngested.push((summary) => {
     evaluateIngested(ctx, summary);
+  });
+  ctx.hooks.listingsDiscovered.push((summary) => {
+    evaluateDiscovered(ctx, summary);
   });
   ctx.hooks.collectionJobFinished.push((jobId) => {
     const job = ctx.db.get<{ retailer_id: number }>('SELECT retailer_id FROM collection_jobs WHERE id = ?', [jobId]);

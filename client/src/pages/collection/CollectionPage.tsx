@@ -13,6 +13,7 @@ import { JobDrawer } from './JobDrawer.tsx';
 import { JobsTab } from './JobsTab.tsx';
 import { LogsTab } from './LogsTab.tsx';
 import { MethodsTab } from './MethodsTab.tsx';
+import { PlannerTab } from './PlannerTab.tsx';
 import { CollectionActionsProvider } from './shared.tsx';
 import { SourceDrawer } from './SourceDrawer.tsx';
 import { SourcesTab } from './SourcesTab.tsx';
@@ -45,6 +46,7 @@ function CollectionCentre() {
           { value: 'logs', label: 'Logs' },
           { value: 'imports', label: 'Imports & manual entry' },
           { value: 'methods', label: 'Methods' },
+          { value: 'planner', label: 'Cost planner' },
         ]}
       >
         {tab === 'health' ? (
@@ -62,6 +64,8 @@ function CollectionCentre() {
           <LogsTab />
         ) : tab === 'imports' ? (
           <ImportsTab />
+        ) : tab === 'planner' ? (
+          <PlannerTab />
         ) : (
           <MethodsTab />
         )}

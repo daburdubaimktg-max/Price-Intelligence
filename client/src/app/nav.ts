@@ -1,5 +1,5 @@
 import {
-  Activity, BadgePercent, Bell, DatabaseZap, FileChartColumn, Globe, History, LayoutDashboard, Package, Scale, Settings, type LucideIcon,
+  Activity, BadgePercent, Bell, DatabaseZap, FileChartColumn, Flame, Globe, History, LayoutDashboard, Package, PackagePlus, Scale, Settings, Tags, type LucideIcon,
 } from 'lucide-react';
 
 export interface NavItem {
@@ -10,11 +10,14 @@ export interface NavItem {
   end?: boolean;
 }
 
-/** The eleven sections of the product, in the order specified. */
+/** The sections of the product: the eleven specified ones, plus Deals, New Products and Brand Explorer. */
 export const NAV: NavItem[] = [
   { to: '/', label: 'Overview', icon: LayoutDashboard, end: true },
   { to: '/monitor', label: 'Live Price Monitor', icon: Activity },
+  { to: '/deals', label: 'Deals', icon: Flame },
+  { to: '/new-products', label: 'New Products', icon: PackagePlus },
   { to: '/catalogue', label: 'Product Catalogue', icon: Package },
+  { to: '/brands', label: 'Brand Explorer', icon: Tags },
   { to: '/competitors', label: 'Competitor Intelligence', icon: Scale },
   { to: '/history', label: 'Historical Price Explorer', icon: History },
   { to: '/promotions', label: 'Promotion Intelligence', icon: BadgePercent },

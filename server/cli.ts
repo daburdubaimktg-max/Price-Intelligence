@@ -21,6 +21,9 @@ const COMMANDS: Record<string, string> = {
   'purge-demo': 'Remove every DEMO record. Real products, listings and observations are never touched.',
   'export-excel [file]': 'Write the whole database as one Excel workbook (default: <data dir>/exports/price-intelligence-database.xlsx).',
   'backup [file]': 'Write a consistent copy of the SQLite database file (default: <data dir>/backups/price-intelligence-<timestamp>.db).',
+  'load-catalogue <file> [--dry-run] [--update-products]': 'Load a prepared catalogue file: retailers, products, listings and the price observed for each listing (see README).',
+  'suggest-mappings [--min-retailers N]': 'Propose competitor pairings for own products (never approved automatically); with N, only for own products listed at N retailers or more.',
+  'fetch-rates': 'Fetch the latest exchange rates from the configured provider and add them to the rate history.',
   'create-admin <email> [name]': 'Create an administrator with a generated one-time password.',
   'reset-password <email>': 'Give a user a generated one-time password, unlock the account and sign out its sessions.',
 };
@@ -123,6 +126,71 @@ try {
       const target = path.resolve(args[0] ?? path.join(ctx.config.dataDir, 'backups', `price-intelligence-${stamp}.db`));
       await ctx.db.backupTo(target);
       console.log(`Database backup written to ${target}`);
+      break;
+    }
+
+    case 'load-catalogue': {
+      const file = args.find((a) => !a.startsWith('--'));
+      if (!file) {
+        console.error('Usage: node server/cli.ts load-catalogue <file.json> [--dry-run] [--update-products]');
+        exitCode = 1;
+        break;
+      }
+      const absolute = path.resolve(file);
+      const fs = await import('node:fs');
+      if (!fs.existsSync(absolute)) {
+        console.error(`File not found: ${absolute}`);
+        exitCode = 1;
+        break;
+      }
+      const { loadCatalogue } = await import('./services/catalogue-load.ts');
+      const started = Date.now();
+      const dryRun = args.includes('--dry-run');
+      const outcome = loadCatalogue(ctx, JSON.parse(fs.readFileSync(absolute, 'utf8')), { baseDir: path.dirname(absolute), dryRun, updateExisting: args.includes('--update-products') });
+      console.log(`${dryRun ? 'Dry run — nothing was stored. The load would have' : 'Catalogue loaded in ' + ((Date.now() - started) / 1000).toFixed(1) + ' s. It'} created:`);
+      console.log(
+        table([
+          ['Retailers', outcome.retailers_created],
+          ['Brands', outcome.brands_created],
+          ['Categories', outcome.categories_created],
+          ['Products (new / already present)', `${outcome.products_created} / ${outcome.products_reused}`],
+          ['Products brought in line with the file', outcome.products_updated],
+          ['Listings (new / already present)', `${outcome.listings_created} / ${outcome.listings_existing}`],
+          ['Listings left unmatched', outcome.listings_unmatched],
+          ['Listings retired (products archived)', `${outcome.listings_retired} (${outcome.products_archived})`],
+          ['Evidence records', outcome.evidence_created],
+          ['Price observations (new / already present)', `${outcome.observations_inserted} / ${outcome.observations_duplicate}`],
+          ['Observations carrying a deal tag', outcome.tagged_observations],
+          ['Observations rejected', outcome.observations_rejected.length],
+        ]),
+      );
+      for (const r of outcome.observations_rejected.slice(0, 20)) console.log(`  rejected: ${r.retailer} ${r.external_id} — ${r.reason}`);
+      if (outcome.warnings.length) {
+        console.log(`\n${outcome.warnings.length} warning(s):`);
+        for (const w of outcome.warnings.slice(0, 30)) console.log(`  - ${w}`);
+        if (outcome.warnings.length > 30) console.log(`  … ${outcome.warnings.length - 30} more`);
+      }
+      break;
+    }
+
+    case 'suggest-mappings': {
+      const flag = args.indexOf('--min-retailers');
+      const minRetailers = flag >= 0 ? Number(args[flag + 1]) : undefined;
+      if (minRetailers !== undefined && (!Number.isInteger(minRetailers) || minRetailers < 1)) {
+        console.error('Usage: node server/cli.ts suggest-mappings [--min-retailers N]');
+        exitCode = 1;
+        break;
+      }
+      const { suggestCompetitorMappings } = await import('./services/matching.ts');
+      const outcome = suggestCompetitorMappings(ctx, undefined, { minRetailers });
+      console.log(`${outcome.createdIds.length} pairing(s) proposed for ${outcome.considered} own product(s). They wait for review under Product Catalogue → Competitor mappings; nothing is approved automatically.`);
+      break;
+    }
+
+    case 'fetch-rates': {
+      const { fetchRatesFromProvider } = await import('./services/fx.ts');
+      const outcome = await fetchRatesFromProvider(ctx, null);
+      console.log(`Exchange rates as of ${outcome.as_of} from ${outcome.source}: ${outcome.inserted} added, ${outcome.unchanged} already on record (${outcome.currencies.join(', ')}).`);
       break;
     }
 
